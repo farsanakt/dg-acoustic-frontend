@@ -419,7 +419,7 @@ export default function LoginPage() {
               overflow: "hidden",
             }}
           >
-            <summary style={{
+            {/* <summary style={{
               padding: "11px 14px", cursor: "pointer",
               fontSize: 12, fontWeight: 600, color: "var(--slate-500)",
               letterSpacing: ".04em", textTransform: "uppercase",
@@ -448,7 +448,7 @@ export default function LoginPage() {
                 Run: <code style={{ background: "var(--slate-200)", padding: "1px 5px",
                   borderRadius: 4 }}>POST /api/auth/seed</code> to create accounts
               </p>
-            </div>
+            </div> */}
           </motion.details>
 
           <p style={{
