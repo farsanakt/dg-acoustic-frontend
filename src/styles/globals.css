@@ -1,0 +1,86 @@
+/* ── Google Fonts already in index.html ── */
+
+/* ── Design Tokens ──────────────────────────────────── */
+:root {
+  /* Brand palette */
+  --teal-500: #0E9F8E;
+  --teal-600: #0B8276;
+  --teal-400: #2EC4B6;
+  --teal-50:  #E3F8F5;
+
+  --navy-900: #0D2137;
+  --navy-800: #1A3352;
+  --navy-700: #243F63;
+
+  /* Neutrals */
+  --slate-50:  #F8FAFC;
+  --slate-100: #F1F5F9;
+  --slate-200: #E2E8F0;
+  --slate-300: #CBD5E1;
+  --slate-400: #94A3B8;
+  --slate-500: #64748B;
+  --slate-600: #475569;
+  --slate-700: #334155;
+  --slate-800: #1E293B;
+  --slate-900: #0F172A;
+
+  /* Status */
+  --red-500:   #EF4444;
+  --amber-500: #F59E0B;
+  --green-500: #22C55E;
+
+  /* Semantic */
+  --bg:        #F8FAFC;
+  --surface:   #FFFFFF;
+  --border:    #E2E8F0;
+  --text:      #0F172A;
+  --text-muted:#64748B;
+
+  /* Type */
+  --font-display: 'Plus Jakarta Sans', sans-serif;
+  --font-body:    'Inter', sans-serif;
+
+  /* Radius */
+  --r-sm:  6px;
+  --r-md:  10px;
+  --r-lg:  16px;
+  --r-xl:  24px;
+  --r-full:9999px;
+
+  /* Shadow */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.05);
+  --shadow-md: 0 4px 16px rgba(0,0,0,.08);
+  --shadow-lg: 0 10px 40px rgba(0,0,0,.10);
+  --shadow-teal: 0 6px 24px rgba(14,159,142,.28);
+}
+
+/* ── Reset ──────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { font-size: 16px; -webkit-font-smoothing: antialiased; scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+#root { min-height: 100vh; }
+
+button { cursor: pointer; font-family: inherit; border: none; background: none; }
+a      { text-decoration: none; color: inherit; }
+input, select, textarea { font-family: inherit; }
+img, svg { display: block; }
+
+/* ── Scrollbar ──────────────────────────────────────── */
+::-webkit-scrollbar       { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--slate-100); }
+::-webkit-scrollbar-thumb { background: var(--slate-300); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--slate-400); }
+
+/* ── Keyframes ──────────────────────────────────────── */
+@keyframes spin    { to { transform: rotate(360deg); } }
+@keyframes pulse   { 0%,100%{opacity:1} 50%{opacity:.4} }
+@keyframes fadeUp  { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
