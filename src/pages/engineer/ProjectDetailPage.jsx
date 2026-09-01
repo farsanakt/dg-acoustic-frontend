@@ -142,6 +142,7 @@ export default function ProjectDetailPage() {
   const navigate = useNavigate();
 
   const [collapsed,       setCollapsed]       = useState(false);
+  const [mobileOpen,      setMobileOpen]      = useState(false);
   const [project,         setProject]         = useState(null);
   const [loading,         setLoading]         = useState(true);
   const [error,           setError]           = useState(false);
@@ -151,6 +152,7 @@ export default function ProjectDetailPage() {
   const [editModal,       setEditModal]       = useState(false);
   const [deleteModal,     setDeleteModal]     = useState(false);
   const [calcResults,     setCalcResults]     = useState(null);
+  const [calcReceiver,    setCalcReceiver]    = useState(null);
   const [existingCalc,    setExistingCalc]    = useState(null);
 
   const sidebarW = collapsed ? 68 : 232;
@@ -178,6 +180,7 @@ export default function ProjectDetailPage() {
       if (data.calculations?.length > 0) {
         setExistingCalc(data.calculations[0]);
         setCalcResults(data.calculations[0].results);
+        setCalcReceiver(data.calculations[0].receiver);
       }
     }).catch(() => {});
   }, [id]);
@@ -205,7 +208,8 @@ export default function ProjectDetailPage() {
   /* ── Render ── */
   if (loading) return (
     <div style={{ display:"flex", minHeight:"100vh", background:"#F8FAFC" }}>
-      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
+      <Sidebar collapsed={collapsed} setCollapsed={setCollapsed}
+        mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
       <div style={{ flex:1, marginLeft:sidebarW, display:"flex",
         alignItems:"center", justifyContent:"center", flexDirection:"column", gap:14 }}>
         <div style={{ width:38, height:38, border:"3px solid #E2E8F0",
@@ -214,7 +218,16 @@ export default function ProjectDetailPage() {
         <p style={{ color:"#94A3B8", fontSize:13, fontFamily:"Inter,sans-serif" }}>
           Loading project…
         </p>
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @media(max-width:768px){
+          .page-content{ margin-left:0 !important; }
+          .detail-actions{ flex-wrap:wrap; gap:8px; }
+        }
+        @media(max-width:480px){
+          .detail-actions button span{ display:none; }
+        }
+      `}</style>
       </div>
     </div>
   );
@@ -256,7 +269,8 @@ export default function ProjectDetailPage() {
           {/* Breadcrumb row */}
           <div style={{
             display:"flex", alignItems:"center", justifyContent:"space-between",
-            padding:"14px 32px 0",
+            padding:"14px var(--page-pad) 0",
+            flexWrap:"wrap", gap:10,
           }}>
             {/* Left: back + title */}
             <div style={{ display:"flex", alignItems:"center", gap:14 }}>
@@ -387,11 +401,7 @@ export default function ProjectDetailPage() {
                 initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}
                 exit={{ opacity:0 }} transition={{ duration:.22 }}
               >
-                <div style={{
-                  display:"grid",
-                  gridTemplateColumns:"1fr 340px",
-                  gap:24, alignItems:"start",
-                }}>
+                <div className="grid-detail">
                   {/* Left: Project info card */}
                   <div style={{
                     background:"#fff", borderRadius:16,
@@ -529,7 +539,7 @@ export default function ProjectDetailPage() {
                 initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}
                 exit={{ opacity:0 }} transition={{ duration:.22 }}
               >
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:24, alignItems:"start" }}>
+                <div className="grid-acoustic" style={{ gap:24, alignItems:"start" }}>
                   <div>
                     <h2 style={{ fontFamily:"Plus Jakarta Sans,sans-serif",
                       fontWeight:800, fontSize:16, color:"#0F172A",
@@ -542,7 +552,7 @@ export default function ProjectDetailPage() {
                       projectId={id}
                       existing={existingCalc}
                       onSaved={(c) => setExistingCalc(c)}
-                      onResults={(r) => setCalcResults(r)}
+                      onResults={(r, rec) => { setCalcResults(r); if(rec) setCalcReceiver(rec); }}
                     />
                   </div>
                   <div>
@@ -555,7 +565,7 @@ export default function ProjectDetailPage() {
                     </p>
                     <AcousticResults
                       results={calcResults}
-                      receiver={existingCalc?.receiver}
+                      receiver={calcReceiver || existingCalc?.receiver}
                     />
                     {!calcResults && (
                       <div style={{ textAlign:"center", padding:"48px 24px",
