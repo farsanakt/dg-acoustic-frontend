@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -9,18 +9,17 @@ import { useAuth } from "@/context/AuthContext";
 import toast from "react-hot-toast";
 
 const NAV = [
-  { label:"Dashboard", icon:LayoutDashboard, to:"/engineer" },
-  { label:"Projects",  icon:FolderOpen,      to:"/engineer" },
-  { label:"Reports",   icon:FileText,         to:"/engineer" },
-  { label:"History",   icon:History,          to:"/engineer" },
+  { label:"Dashboard", icon:LayoutDashboard },
+  { label:"Projects",  icon:FolderOpen      },
+  { label:"Reports",   icon:FileText        },
+  { label:"History",   icon:History         },
 ];
 
 export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobileOpen }) {
   const { user, logout } = useAuth();
-  const navigate  = useNavigate();
-  const location  = useLocation();
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  // Close mobile sidebar on route change
   useEffect(() => { setMobileOpen?.(false); }, [location.pathname]);
 
   const handleLogout = async () => {
@@ -30,9 +29,8 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
   };
 
   const W = collapsed ? 68 : 232;
-  const isOnEngineer = location.pathname.startsWith("/engineer");
 
-  const SidebarContent = () => (
+  const Inner = ({ isMobile }) => (
     <div style={{
       height:"100%", display:"flex", flexDirection:"column",
       background:"#0D2137",
@@ -40,19 +38,19 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
       {/* Logo */}
       <div style={{
         height:64, display:"flex", alignItems:"center",
-        padding: collapsed ? "0 14px" : "0 20px",
+        padding: (!isMobile && collapsed) ? "0 14px" : "0 20px",
         borderBottom:"1px solid rgba(255,255,255,.07)",
-        gap:12, flexShrink:0, justifyContent: collapsed ? "center" : "flex-start",
+        gap:12, flexShrink:0,
       }}>
         <div style={{
-          width:36, height:36, background:"#0E9F8E", borderRadius:10,
+          width:36, height:36, background:"#0E9F8E", borderRadius:10, flexShrink:0,
           display:"flex", alignItems:"center", justifyContent:"center",
-          flexShrink:0, boxShadow:"0 4px 12px rgba(14,159,142,.4)",
+          boxShadow:"0 4px 12px rgba(14,159,142,.4)",
         }}>
           <Waves size={18} color="white" strokeWidth={2.5} />
         </div>
-        {!collapsed && (
-          <div>
+        {(isMobile || !collapsed) && (
+          <div style={{ flex:1 }}>
             <div style={{ color:"#fff", fontFamily:"var(--font-display)",
               fontWeight:800, fontSize:15, lineHeight:1 }}>DG-SARIA</div>
             <div style={{ color:"rgba(255,255,255,.35)", fontSize:10.5, marginTop:2 }}>
@@ -60,11 +58,10 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
             </div>
           </div>
         )}
-        {/* Mobile close button */}
-        {mobileOpen && (
+        {isMobile && (
           <button onClick={() => setMobileOpen(false)}
-            style={{ marginLeft:"auto", color:"rgba(255,255,255,.5)",
-              background:"none", border:"none", cursor:"pointer", padding:4 }}>
+            style={{ background:"none", border:"none", cursor:"pointer",
+              color:"rgba(255,255,255,.5)", padding:4, display:"flex" }}>
             <X size={18} />
           </button>
         )}
@@ -73,56 +70,45 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
       {/* Nav */}
       <nav style={{ flex:1, padding:"16px 10px",
         display:"flex", flexDirection:"column", gap:4 }}>
-        {NAV.map(({ label, icon:Icon, to }, i) => {
-          const active = i === 0 && isOnEngineer;
+        {NAV.map(({ label, icon:Icon }, i) => {
+          const active = i === 0;
           return (
             <button key={label}
-              onClick={() => navigate(to)}
+              onClick={() => navigate("/engineer")}
               style={{
                 display:"flex", alignItems:"center",
                 gap:12, padding:"11px 14px",
                 borderRadius:10, border:"none",
                 background: active ? "rgba(14,159,142,.18)" : "transparent",
-                color:      active ? "#2EC4B6" : "rgba(255,255,255,.55)",
-                fontFamily:"var(--font-body)", fontSize:14, fontWeight:500,
+                color:      active ? "#2EC4B6"              : "rgba(255,255,255,.55)",
+                fontFamily:"var(--font-body)", fontSize:14,
+                fontWeight: active ? 600 : 500,
                 cursor:"pointer", width:"100%", textAlign:"left",
                 transition:"all .18s", position:"relative",
-                justifyContent: collapsed ? "center" : "flex-start",
+                justifyContent: (!isMobile && collapsed) ? "center" : "flex-start",
               }}
-              onMouseEnter={e => {
-                if (!active) {
-                  e.currentTarget.style.background = "rgba(255,255,255,.07)";
-                  e.currentTarget.style.color = "rgba(255,255,255,.85)";
-                }
-              }}
-              onMouseLeave={e => {
-                if (!active) {
-                  e.currentTarget.style.background = "transparent";
-                  e.currentTarget.style.color = "rgba(255,255,255,.55)";
-                }
-              }}
+              onMouseEnter={e => { if(!active){ e.currentTarget.style.background="rgba(255,255,255,.07)"; e.currentTarget.style.color="rgba(255,255,255,.85)"; }}}
+              onMouseLeave={e => { if(!active){ e.currentTarget.style.background="transparent"; e.currentTarget.style.color="rgba(255,255,255,.55)"; }}}
             >
               {active && (
-                <motion.div layoutId="sidebar-active"
-                  style={{ position:"absolute", left:0, top:6, bottom:6,
-                    width:3, borderRadius:99, background:"#0E9F8E" }} />
+                <div style={{ position:"absolute", left:0, top:6, bottom:6,
+                  width:3, borderRadius:99, background:"#0E9F8E" }} />
               )}
               <Icon size={18} strokeWidth={active ? 2.5 : 2} />
-              {!collapsed && <span>{label}</span>}
+              {(isMobile || !collapsed) && <span>{label}</span>}
             </button>
           );
         })}
       </nav>
 
-      {/* User + Logout */}
+      {/* User */}
       <div style={{ padding:"12px 10px",
         borderTop:"1px solid rgba(255,255,255,.07)" }}>
         <div style={{
           display:"flex", alignItems:"center", gap:10,
-          padding: collapsed ? "10px 13px" : "10px 12px",
-          borderRadius:10, background:"rgba(255,255,255,.05)",
-          marginBottom:6,
-          justifyContent: collapsed ? "center" : "flex-start",
+          padding:"10px 12px", borderRadius:10,
+          background:"rgba(255,255,255,.05)", marginBottom:6,
+          justifyContent: (!isMobile && collapsed) ? "center" : "flex-start",
         }}>
           <div style={{
             width:32, height:32, borderRadius:"50%", flexShrink:0,
@@ -132,7 +118,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
           }}>
             {user?.name?.[0]?.toUpperCase() || "U"}
           </div>
-          {!collapsed && (
+          {(isMobile || !collapsed) && (
             <div style={{ overflow:"hidden" }}>
               <div style={{ color:"#fff", fontSize:13, fontWeight:600,
                 whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
@@ -144,36 +130,34 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
         </div>
         <button onClick={handleLogout}
           style={{
-            width:"100%", display:"flex", alignItems:"center",
-            gap:10, padding: collapsed ? "10px 14px" : "10px 14px",
-            borderRadius:10, color:"rgba(255,255,255,.4)",
-            fontSize:13, fontWeight:500, transition:"all .18s",
-            justifyContent: collapsed ? "center" : "flex-start",
+            width:"100%", display:"flex", alignItems:"center", gap:10,
+            padding:"10px 14px", borderRadius:10,
+            color:"rgba(255,255,255,.4)", fontSize:13, fontWeight:500,
             cursor:"pointer", border:"none", background:"transparent",
+            transition:"all .18s",
+            justifyContent: (!isMobile && collapsed) ? "center" : "flex-start",
           }}
-          onMouseEnter={e => { e.currentTarget.style.background="rgba(239,68,68,.15)"; e.currentTarget.style.color="#F87171"; }}
-          onMouseLeave={e => { e.currentTarget.style.background="transparent"; e.currentTarget.style.color="rgba(255,255,255,.4)"; }}
+          onMouseEnter={e=>{ e.currentTarget.style.background="rgba(239,68,68,.15)"; e.currentTarget.style.color="#F87171"; }}
+          onMouseLeave={e=>{ e.currentTarget.style.background="transparent"; e.currentTarget.style.color="rgba(255,255,255,.4)"; }}
         >
           <LogOut size={17} />
-          {!collapsed && <span>Logout</span>}
+          {(isMobile || !collapsed) && <span>Logout</span>}
         </button>
       </div>
 
-      {/* Collapse toggle — desktop only */}
-      {!mobileOpen && (
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          style={{
-            position:"absolute", top:"50%", right:-12,
-            transform:"translateY(-50%)",
-            width:24, height:24, borderRadius:"50%",
-            background:"#1A3352", border:"1.5px solid rgba(255,255,255,.12)",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            color:"rgba(255,255,255,.5)", cursor:"pointer",
-            transition:"all .2s", zIndex:10,
-          }}
-        >
-          <motion.div animate={{ rotate: collapsed ? 0 : 180 }} transition={{ duration:.25 }}>
+      {/* Desktop collapse toggle */}
+      {!isMobile && (
+        <button onClick={() => setCollapsed(!collapsed)} style={{
+          position:"absolute", top:"50%", right:-12,
+          transform:"translateY(-50%)", width:24, height:24,
+          borderRadius:"50%", background:"#1A3352",
+          border:"1.5px solid rgba(255,255,255,.12)",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          color:"rgba(255,255,255,.5)", cursor:"pointer",
+          transition:"all .2s", zIndex:10,
+        }}>
+          <motion.div animate={{ rotate: collapsed ? 0 : 180 }}
+            transition={{ duration:.25 }}>
             <ChevronRight size={13} />
           </motion.div>
         </button>
@@ -183,7 +167,7 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
 
   return (
     <>
-      {/* ── Desktop sidebar (fixed) ── */}
+      {/* ── Desktop sidebar ── */}
       <motion.aside
         animate={{ width: W }}
         transition={{ duration:.25, ease:[.4,0,.2,1] }}
@@ -192,48 +176,34 @@ export default function Sidebar({ collapsed, setCollapsed, mobileOpen, setMobile
           position:"fixed", left:0, top:0, bottom:0,
           zIndex:40, overflow:"hidden",
           boxShadow:"4px 0 24px rgba(0,0,0,.18)",
-          display:"flex", flexDirection:"column",
         }}
-        className="desktop-sidebar"
+        className="dg-sidebar-desktop"
       >
-        <SidebarContent />
+        <Inner isMobile={false} />
       </motion.aside>
 
-      {/* ── Mobile sidebar (slide-over) ── */}
+      {/* ── Mobile slide-over ── */}
       <AnimatePresence>
         {mobileOpen && (
           <>
-            {/* Backdrop */}
             <motion.div
               initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}
               onClick={() => setMobileOpen(false)}
-              style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)",
+              style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.55)",
                 zIndex:50, backdropFilter:"blur(2px)" }}
             />
-            {/* Drawer */}
             <motion.aside
               initial={{ x:-260 }} animate={{ x:0 }} exit={{ x:-260 }}
               transition={{ type:"spring", damping:28, stiffness:300 }}
-              style={{
-                position:"fixed", left:0, top:0, bottom:0,
+              style={{ position:"fixed", left:0, top:0, bottom:0,
                 width:260, zIndex:51, overflow:"hidden",
-                boxShadow:"8px 0 32px rgba(0,0,0,.3)",
-              }}
+                boxShadow:"8px 0 32px rgba(0,0,0,.3)" }}
             >
-              <SidebarContent />
+              <Inner isMobile={true} />
             </motion.aside>
           </>
         )}
       </AnimatePresence>
-
-      <style>{`
-        @media (max-width: 768px) {
-          .desktop-sidebar { display: none !important; }
-        }
-        @media (min-width: 769px) {
-          /* mobile drawer never shown on desktop */
-        }
-      `}</style>
     </>
   );
 }

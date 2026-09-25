@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Zap, Box, Wind, Gauge, MapPin,
@@ -10,17 +10,79 @@ import { createCalculationApi, updateCalculationApi, runCalculationApi } from "@
 const BANDS     = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
 const BAND_KEYS = ["hz63","hz125","hz250","hz500","hz1000","hz2000","hz4000","hz8000"];
 
+/* ─── A-Weighting correction per octave band (IEC 61672) ───────
+   Source: DIESEL_GENERATOR.docx, Case 2 / Case 4 example tables.
+   dB = dB(A) − correction  (correction is arithmetically subtracted) */
+const A_WEIGHTING = {
+  hz63: -26.2, hz125: -16.1, hz250: -8.6, hz500: -3.2,
+  hz1000: 0,   hz2000: 1.2,  hz4000: 1.0, hz8000: -1.1,
+};
+
+/* ─── Generator noise-data entry modes (Cases 1–4 in the doc) ── */
+const NOISE_INPUT_TYPES = [
+  { value: "swl_db",  label: "Sound Power Level (dB)" },
+  { value: "swl_dba", label: "Sound Power Level dB(A)" },
+  { value: "spl_db",  label: "Sound Pressure Level (dB)" },
+  { value: "spl_dba", label: "Sound Pressure Level dB(A)" },
+];
+
+const DISTANCE_MODES = ["spl_db", "spl_dba"]; // modes that need a measurement distance r
+
+function round1(n) { return Math.round(n * 10) / 10; }
+
 /* ─── Default form ─────────────────────────────────────────── */
 const EMPTY_BAND = { hz63:0,hz125:0,hz250:0,hz500:0,hz1000:0,hz2000:0,hz4000:0,hz8000:0 };
 
 const DEFAULT = {
   noisePath: "exhaust",
-  generator: { equipmentId:"",modelNumber:"",ratedKva:0,buildingRef:"",swl_dba:0, swl:{...EMPTY_BAND} },
+  generator: {
+    equipmentId:"", modelNumber:"", ratedKva:0, buildingRef:"", swl_dba:0,
+    noiseInputType: "swl_db",          // 'swl_db' | 'swl_dba' | 'spl_dba'
+    measurementDistance_m: 1,          // only used for 'spl_dba' (Case 4)
+    rawBand: {...EMPTY_BAND},          // what the user actually typed, in the selected unit
+    swl: {...EMPTY_BAND},              // ALWAYS the resulting Sound Power Level in dB — sent to the calc engine
+  },
   room:       { length_m:0,width_m:0,height_m:0,avgAbsCoeff:0.9 },
   duct:       { width_mm:0,height_mm:0,length_m:0,lining:"unlined",elbows:0,terminationType:"wall" },
   attenuator: { model:"",width_mm:0,height_mm:0,length_mm:0,pressureDrop_pa:0, il:{...EMPTY_BAND} },
   receiver:   { description:"",distance_m:3,directivity:2,requiredNC:65,requiredNR:65,required_dba:65 },
 };
+
+/* ─── Conversion logic (DIESEL_GENERATOR.docx Cases 1–4) ────────
+   Case 1 (swl_db):  used directly, no conversion.
+   Case 2 (swl_dba): SWL(dB) = SWL(dB(A)) − A-Weighting correction
+   Case 3 (spl_db):  SWL(dB) = SPL(dB) + 10·log10(4·π·r²)
+   Case 4 (spl_dba): SPL(dB) = SPL(dB(A)) − A-Weighting correction
+                      SWL(dB) = SPL(dB) + 10·log10(4·π·r²)          */
+function computeSWLFromRaw(noiseInputType, rawBand, distance_m) {
+  const r = distance_m > 0 ? distance_m : 1;
+  const distanceTerm = 10 * Math.log10(4 * Math.PI * r * r);
+  const out = {};
+  BAND_KEYS.forEach(k => {
+    const raw = rawBand?.[k] ?? 0;
+    const correction = A_WEIGHTING[k];
+    let swl;
+    if (noiseInputType === "swl_dba") {
+      swl = raw - correction;
+    } else if (noiseInputType === "spl_db") {
+      swl = raw + distanceTerm;
+    } else if (noiseInputType === "spl_dba") {
+      const splDb = raw - correction;
+      swl = splDb + distanceTerm;
+    } else {
+      swl = raw;
+    }
+    out[k] = round1(swl);
+  });
+  return out;
+}
+
+function bandGridLabel(type) {
+  if (type === "swl_dba") return "Sound Power Level per Octave Band — dB(A) (from manufacturer datasheet)";
+  if (type === "spl_db")  return "Sound Pressure Level per Octave Band — dB at measurement distance r";
+  if (type === "spl_dba") return "Sound Pressure Level per Octave Band — dB(A) at measurement distance r";
+  return "Sound Power Level per Octave Band — dB re 1pW (from manufacturer datasheet)";
+}
 
 /* ─── Number input: string-based so user can type freely ───── */
 function NumInput({ label, value, onChange, unit, step = 0.1, min, compact }) {
@@ -209,7 +271,69 @@ function Section({ icon: Icon, title, color="#0E9F8E", children, defaultOpen=tru
   );
 }
 
-/* ─── Octave band grid — one input per band ─────────────────── */
+/* ─── Single octave-band cell ─────────────────────────────────
+   Buffered-string controlled input (same pattern as NumInput).
+   IMPORTANT: this must stay a plain controlled input with NO key
+   tied to `value` — keying it to the value (as the old version did)
+   forces React to unmount/remount the <input> on every keystroke,
+   which is what made it impossible to type multi-digit numbers
+   (e.g. "100") — the DOM node kept getting recreated mid-type. */
+function BandCell({ value, onChange }) {
+  const [localVal, setLocalVal] = useState(String(value ?? 0));
+  const [focused, setFocused] = useState(false);
+
+  const displayVal = focused ? localVal : String(value ?? 0);
+
+  const handleChange = (e) => {
+    const raw = e.target.value;
+    setLocalVal(raw);
+    const parsed = parseFloat(raw);
+    if (!isNaN(parsed)) onChange(parsed);
+  };
+
+  const handleFocus = (e) => {
+    setLocalVal(String(value ?? 0));
+    setFocused(true);
+    e.target.select();
+  };
+
+  const handleBlur = () => {
+    setFocused(false);
+    const parsed = parseFloat(localVal);
+    if (isNaN(parsed)) {
+      setLocalVal("0");
+      onChange(0);
+    } else {
+      setLocalVal(String(parsed));
+      onChange(parsed);
+    }
+  };
+
+  return (
+    <input
+      type="number"
+      value={displayVal}
+      step={0.1}
+      onChange={handleChange}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      style={{
+        width:"100%", minWidth:58,
+        padding:"7px 4px",
+        border:`1.5px solid ${focused ? "#0E9F8E" : "#E2E8F0"}`,
+        borderRadius:7, fontSize:13,
+        fontWeight:600, color:"#0F172A",
+        background:"#fff", outline:"none",
+        fontFamily:"Inter,sans-serif",
+        textAlign:"center",
+        boxShadow: focused ? "0 0 0 3px rgba(14,159,142,.12)" : "none",
+        transition:"border-color .15s, box-shadow .15s",
+      }}
+    />
+  );
+}
+
+/* ─── Octave band grid — one BandCell per band ──────────────── */
 function BandGrid({ label, values, onChange }) {
   return (
     <div>
@@ -232,41 +356,10 @@ function BandGrid({ label, values, onChange }) {
                 padding:"3px 2px", letterSpacing:"-.3px" }}>
                 {BANDS[i]}Hz
               </div>
-              {/* Input with min-width so value is fully visible */}
-              <div style={{ position:"relative" }}>
-                <input
-                  type="number"
-                  defaultValue={values[k] ?? 0}
-                  key={`${k}-${values[k]}`}
-                  step={0.1}
-                  onFocus={e => {
-                    e.target.select();
-                    e.target.style.borderColor="#0E9F8E";
-                    e.target.style.boxShadow="0 0 0 3px rgba(14,159,142,.12)";
-                  }}
-                  onBlur={e => {
-                    e.target.style.borderColor="#E2E8F0";
-                    e.target.style.boxShadow="none";
-                    const v = parseFloat(e.target.value);
-                    onChange({ ...values, [k]: isNaN(v) ? 0 : v });
-                  }}
-                  onChange={e => {
-                    const v = parseFloat(e.target.value);
-                    if (!isNaN(v)) onChange({ ...values, [k]: v });
-                  }}
-                  style={{
-                    width:"100%", minWidth:58,
-                    padding:"7px 4px",
-                    border:"1.5px solid #E2E8F0",
-                    borderRadius:7, fontSize:13,
-                    fontWeight:600, color:"#0F172A",
-                    background:"#fff", outline:"none",
-                    fontFamily:"Inter,sans-serif",
-                    textAlign:"center",
-                    transition:"border-color .15s, box-shadow .15s",
-                  }}
-                />
-              </div>
+              <BandCell
+                value={values[k]}
+                onChange={v => onChange({ ...values, [k]: v })}
+              />
             </div>
           ))}
         </div>
@@ -275,30 +368,164 @@ function BandGrid({ label, values, onChange }) {
   );
 }
 
+/* ─── Read-only conversion breakdown, mirrors DIESEL_GENERATOR.docx
+       example tables so the user can verify the math per band ──── */
+const thStyle = { border:"1px solid #E2E8F0", padding:"6px 8px", background:"#F1F5F9",
+  fontWeight:700, color:"#475569", textAlign:"center", whiteSpace:"nowrap" };
+const tdStyle = { border:"1px solid #E2E8F0", padding:"6px 8px", textAlign:"center", color:"#334155" };
+
+function ConversionPreviewTable({ noiseInputType, rawBand, distance_m, resultBand }) {
+  if (noiseInputType === "swl_db") return null; // Case 1 — no conversion, nothing to show
+
+  const r = distance_m > 0 ? distance_m : 1;
+  const distanceTerm = round1(10 * Math.log10(4 * Math.PI * r * r));
+
+  const entryLabel = {
+    swl_dba: "Entered SWL dB(A)",
+    spl_db:  "Entered SPL dB",
+    spl_dba: "Entered SPL dB(A)",
+  }[noiseInputType];
+
+  const rows = [
+    { label: entryLabel, values: BAND_KEYS.map(k => rawBand?.[k] ?? 0) },
+  ];
+
+  if (noiseInputType === "swl_dba") {
+    rows.push({
+      label: "A-Weighting Correction",
+      values: BAND_KEYS.map(k => A_WEIGHTING[k]),
+    });
+    rows.push({
+      label: "Resulting SWL (dB)",
+      values: BAND_KEYS.map(k => resultBand?.[k] ?? 0),
+      highlight: true,
+    });
+  } else if (noiseInputType === "spl_db") {
+    rows.push({
+      label: `+10·log₁₀(4πr²)  @ r=${r}m`,
+      values: BAND_KEYS.map(() => distanceTerm),
+    });
+    rows.push({
+      label: "Resulting SWL (dB)",
+      values: BAND_KEYS.map(k => resultBand?.[k] ?? 0),
+      highlight: true,
+    });
+  } else if (noiseInputType === "spl_dba") {
+    rows.push({
+      label: "A-Weighting Correction",
+      values: BAND_KEYS.map(k => A_WEIGHTING[k]),
+    });
+    rows.push({
+      label: "SPL (dB) after A-Weighting",
+      values: BAND_KEYS.map(k => round1((rawBand?.[k] ?? 0) - A_WEIGHTING[k])),
+    });
+    rows.push({
+      label: `+10·log₁₀(4πr²)  @ r=${r}m`,
+      values: BAND_KEYS.map(() => distanceTerm),
+    });
+    rows.push({
+      label: "Resulting SWL (dB)",
+      values: BAND_KEYS.map(k => resultBand?.[k] ?? 0),
+      highlight: true,
+    });
+  }
+
+  return (
+    <div style={{ overflowX:"auto", marginTop:14 }}>
+      <table style={{ borderCollapse:"collapse", width:"100%", minWidth:640,
+        fontFamily:"Inter,sans-serif", fontSize:12 }}>
+        <thead>
+          <tr>
+            <th style={{...thStyle, textAlign:"left"}}>Band</th>
+            {BANDS.map(b => <th key={b} style={thStyle}>{b}Hz</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} style={{ background: row.highlight ? "#E3F8F5" : (i % 2 ? "#F8FAFC" : "#fff") }}>
+              <td style={{...tdStyle, fontWeight:600, textAlign:"left", whiteSpace:"nowrap"}}>{row.label}</td>
+              {row.values.map((v, j) => (
+                <td key={j} style={{...tdStyle,
+                  fontWeight: row.highlight ? 700 : 500,
+                  color: row.highlight ? "#0E9F8E" : "#334155"}}>
+                  {v}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const labelHeaderStyle = { fontSize:12, fontWeight:700, color:"#334155",
+  fontFamily:"Plus Jakarta Sans,sans-serif", margin:"0 0 8px" };
+
+function segButtonStyle(active) {
+  return {
+    padding:"7px 14px", borderRadius:8,
+    border:`1.5px solid ${active ? "#0E9F8E" : "#E2E8F0"}`,
+    background: active ? "#E3F8F5" : "#fff",
+    color: active ? "#0E9F8E" : "#64748B",
+    fontSize:13, fontWeight:600, cursor:"pointer",
+    fontFamily:"Inter,sans-serif", transition:"all .15s",
+  };
+}
+
 /* ═══════════════════════════════════════════════════════════════ */
 export default function AcousticInputForm({ projectId, existing, onSaved, onResults }) {
-  const [form, setForm] = useState(() =>
-    existing ? {
-      noisePath:  existing.noisePath  ?? "exhaust",
-      generator:  existing.generator  ?? DEFAULT.generator,
+  const [form, setForm] = useState(() => {
+    if (!existing) return DEFAULT;
+    const g = existing.generator || {};
+    return {
+      noisePath: existing.noisePath ?? "exhaust",
+      generator: {
+        equipmentId: g.equipmentId ?? "",
+        modelNumber: g.modelNumber ?? "",
+        ratedKva:    g.ratedKva ?? 0,
+        buildingRef: g.buildingRef ?? "",
+        swl_dba:     g.swl_dba ?? 0,
+        // Back-compat: older saved calculations only ever had `swl` (dB),
+        // so treat them as Case 1 (Sound Power Level dB) by default.
+        noiseInputType: g.noiseInputType ?? "swl_db",
+        measurementDistance_m: g.measurementDistance_m ?? 1,
+        rawBand: g.rawBand ?? g.swl ?? {...EMPTY_BAND},
+        swl:     g.swl ?? {...EMPTY_BAND},
+      },
       room:       existing.room       ?? DEFAULT.room,
       duct:       existing.duct       ?? DEFAULT.duct,
       attenuator: existing.attenuator ?? DEFAULT.attenuator,
       receiver:   existing.receiver   ?? DEFAULT.receiver,
-    } : DEFAULT
-  );
+    };
+  });
 
   const [saving,  setSaving]  = useState(false);
   const [running, setRunning] = useState(false);
 
   /* Nested updaters */
-  const setG  = (k,v) => setForm(f => ({...f, generator:  {...f.generator,  [k]:v}}));
-  const setGW = (v)   => setForm(f => ({...f, generator:  {...f.generator,  swl:v}}));
-  const setRm = (k,v) => setForm(f => ({...f, room:       {...f.room,       [k]:v}}));
-  const setD  = (k,v) => setForm(f => ({...f, duct:       {...f.duct,       [k]:v}}));
-  const setA  = (k,v) => setForm(f => ({...f, attenuator: {...f.attenuator, [k]:v}}));
-  const setAW = (v)   => setForm(f => ({...f, attenuator: {...f.attenuator, il:v}}));
-  const setRc = (k,v) => setForm(f => ({...f, receiver:   {...f.receiver,   [k]:v}}));
+  const setG    = (k,v) => setForm(f => ({...f, generator:  {...f.generator,  [k]:v}}));
+  const setGRaw = (v)   => setForm(f => ({...f, generator:  {...f.generator,  rawBand:v}}));
+  const setRm   = (k,v) => setForm(f => ({...f, room:       {...f.room,       [k]:v}}));
+  const setD    = (k,v) => setForm(f => ({...f, duct:       {...f.duct,       [k]:v}}));
+  const setA    = (k,v) => setForm(f => ({...f, attenuator: {...f.attenuator, [k]:v}}));
+  const setAW   = (v)   => setForm(f => ({...f, attenuator: {...f.attenuator, il:v}}));
+  const setRc   = (k,v) => setForm(f => ({...f, receiver:   {...f.receiver,   [k]:v}}));
+
+  /* Recompute generator.swl (the value the calc engine actually consumes)
+     whenever the noise input type, raw band values, or measurement
+     distance change — per DIESEL_GENERATOR.docx Cases 1, 2 & 4. */
+  useEffect(() => {
+    setForm(f => {
+      const computed = computeSWLFromRaw(
+        f.generator.noiseInputType, f.generator.rawBand, f.generator.measurementDistance_m
+      );
+      const unchanged = BAND_KEYS.every(k => f.generator.swl[k] === computed[k]);
+      if (unchanged) return f;
+      return { ...f, generator: { ...f.generator, swl: computed } };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.generator.noiseInputType, form.generator.rawBand, form.generator.measurementDistance_m]);
 
   /* Run without saving */
   const handleRun = async () => {
@@ -387,14 +614,55 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
               onChange={v=>setG("buildingRef",v)} placeholder="e.g. Ground Floor" />
           </div>
 
-          {/* Octave band SWL */}
+          {/* Noise data input type — Case 1 / 2 / 4 from DIESEL_GENERATOR.docx */}
+          <div>
+            <p style={labelHeaderStyle}>Noise Data Type</p>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {NOISE_INPUT_TYPES.map(t => (
+                <button key={t.value}
+                  onClick={() => setG("noiseInputType", t.value)}
+                  style={segButtonStyle(form.generator.noiseInputType === t.value)}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize:11.5, color:"#94A3B8", margin:"6px 0 0",
+              fontFamily:"Inter,sans-serif" }}>
+              Switching type keeps the octave-band values below — re-enter them if they were
+              measured in a different unit.
+            </p>
+          </div>
+
+          {DISTANCE_MODES.includes(form.generator.noiseInputType) && (
+            <div style={{ maxWidth:220 }}>
+              <NumInput label="Measurement Distance (r)"
+                value={form.generator.measurementDistance_m}
+                onChange={v=>setG("measurementDistance_m", v)}
+                unit="m" step={0.1} min={0.1} />
+            </div>
+          )}
+
+          {/* Octave band SWL / SPL entry + live conversion */}
           <div style={{ background:"#F8FAFC", borderRadius:10, padding:"14px 16px",
             border:"1px solid #E2E8F0" }}>
             <BandGrid
-              label="Sound Power Level per Octave Band — dB re 1pW (from manufacturer datasheet)"
-              values={form.generator.swl}
-              onChange={setGW}
+              label={bandGridLabel(form.generator.noiseInputType)}
+              values={form.generator.rawBand}
+              onChange={setGRaw}
             />
+            <ConversionPreviewTable
+              noiseInputType={form.generator.noiseInputType}
+              rawBand={form.generator.rawBand}
+              distance_m={form.generator.measurementDistance_m}
+              resultBand={form.generator.swl}
+            />
+            {form.generator.noiseInputType !== "swl_db" && (
+              <p style={{ fontSize:11.5, color:"#64748B", marginTop:8,
+                fontFamily:"Inter,sans-serif" }}>
+                The resulting Sound Power Level (dB) row above is calculated automatically
+                and is what gets sent to the calculation engine.
+              </p>
+            )}
           </div>
         </div>
       </Section>

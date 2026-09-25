@@ -432,6 +432,8 @@ export default function LoginPage() {
                 { role: "Admin",    email: "admin@aaplconsultants.com",    pwd: "Admin@123"    },
                 { role: "Engineer", email: "engineer@aaplconsultants.com", pwd: "Engineer@123" },
                 { role: "Client",   email: "client@aaplconsultants.com",   pwd: "Client@123"   },
+                 {role :'client side ',email:'cleint @gmail.com ',pwd :limit}
+            {limited access to engineer }
               ].map((a) => (
                 <div key={a.role} style={{
                   marginTop: 10, fontSize: 12,

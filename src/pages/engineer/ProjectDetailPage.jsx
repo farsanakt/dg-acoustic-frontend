@@ -18,6 +18,7 @@ import DeleteModal          from "../../components/DeleteModal";
 import AcousticInputForm    from "@/components/acoustic/AcousticInputForm";
 import AcousticResults      from "@/components/acoustic/AcousticResults";
 import { getProjectApi, updateProjectApi } from "@/api/projectApi";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { getCalculationsApi } from "@/api/calculationApi";
 
 /* ── Status options ── */
@@ -141,6 +142,7 @@ export default function ProjectDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
 
+  const isMobile = useIsMobile();
   const [collapsed,       setCollapsed]       = useState(false);
   const [mobileOpen,      setMobileOpen]      = useState(false);
   const [project,         setProject]         = useState(null);
@@ -155,7 +157,7 @@ export default function ProjectDetailPage() {
   const [calcReceiver,    setCalcReceiver]    = useState(null);
   const [existingCalc,    setExistingCalc]    = useState(null);
 
-  const sidebarW = collapsed ? 68 : 232;
+  const sidebarW = isMobile ? 0 : (collapsed ? 68 : 232);
 
   /* Fetch */
   const fetchProject = useCallback(async () => {
@@ -220,12 +222,9 @@ export default function ProjectDetailPage() {
         </p>
         <style>{`
         @keyframes spin{to{transform:rotate(360deg)}}
+        .dg-sidebar-desktop{ display:flex !important; flex-direction:column; }
         @media(max-width:768px){
-          .page-content{ margin-left:0 !important; }
-          .detail-actions{ flex-wrap:wrap; gap:8px; }
-        }
-        @media(max-width:480px){
-          .detail-actions button span{ display:none; }
+          .dg-sidebar-desktop{ display:none !important; }
         }
       `}</style>
       </div>
@@ -269,7 +268,7 @@ export default function ProjectDetailPage() {
           {/* Breadcrumb row */}
           <div style={{
             display:"flex", alignItems:"center", justifyContent:"space-between",
-            padding:"14px var(--page-pad) 0",
+            padding: isMobile ? "12px 12px 0" : "14px 28px 0",
             flexWrap:"wrap", gap:10,
           }}>
             {/* Left: back + title */}
@@ -401,7 +400,12 @@ export default function ProjectDetailPage() {
                 initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}
                 exit={{ opacity:0 }} transition={{ duration:.22 }}
               >
-                <div className="grid-detail">
+                <div style={{
+                    display:"grid",
+                    gridTemplateColumns: isMobile ? "1fr" : "1fr 340px",
+                    gap: isMobile ? 20 : 24,
+                    alignItems:"start",
+                  }}>
                   {/* Left: Project info card */}
                   <div style={{
                     background:"#fff", borderRadius:16,
@@ -539,7 +543,12 @@ export default function ProjectDetailPage() {
                 initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}
                 exit={{ opacity:0 }} transition={{ duration:.22 }}
               >
-                <div className="grid-acoustic" style={{ gap:24, alignItems:"start" }}>
+                <div style={{
+                    display:"grid",
+                    gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+                    gap: isMobile ? 20 : 24,
+                    alignItems:"start",
+                  }}>
                   <div>
                     <h2 style={{ fontFamily:"Plus Jakarta Sans,sans-serif",
                       fontWeight:800, fontSize:16, color:"#0F172A",
