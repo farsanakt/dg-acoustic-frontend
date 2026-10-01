@@ -12,6 +12,89 @@ const BANDS     = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
 const BAND_KEYS = ["hz63","hz125","hz250","hz500","hz1000","hz2000","hz4000","hz8000"];
 const A_WEIGHT  = [-26.2, -16.1, -8.6, -3.2, 0, 1.2, 1.0, -1.1];
 
+const A_WEIGHTING = {
+  hz63:-26.2, hz125:-16.1, hz250:-8.6, hz500:-3.2,
+  hz1000:0,   hz2000:1.2,  hz4000:1.0, hz8000:-1.1,
+};
+
+const NOISE_INPUT_TYPES = [
+  { value:"swl_db",  label:"SWL dB"   },
+  { value:"swl_dba", label:"SWL dB(A)"},
+  { value:"spl_db",  label:"SPL dB"   },
+  { value:"spl_dba", label:"SPL dB(A)"},
+];
+const DISTANCE_MODES = ["spl_db","spl_dba"];
+
+function round1(n) { return Math.round(n * 10) / 10; }
+
+function computeSWLFromRaw(noiseInputType, rawBand, distance_m) {
+  const r = distance_m > 0 ? distance_m : 1;
+  const distanceTerm = 10 * Math.log10(4 * Math.PI * r * r);
+  const out = {};
+  BAND_KEYS.forEach(k => {
+    const raw  = rawBand?.[k] ?? 0;
+    const corr = A_WEIGHTING[k];
+    let swl;
+    if      (noiseInputType === "swl_dba") swl = raw - corr;
+    else if (noiseInputType === "spl_db")  swl = raw + distanceTerm;
+    else if (noiseInputType === "spl_dba") swl = (raw - corr) + distanceTerm;
+    else                                   swl = raw;
+    out[k] = round1(swl);
+  });
+  return out;
+}
+
+/* ── Conversion preview table (from existing form) ─────────── */
+const thS = { border:"1px solid #E2E8F0", padding:"6px 8px", background:"#F1F5F9",
+  fontWeight:700, color:"#475569", textAlign:"center", whiteSpace:"nowrap" };
+const tdS = { border:"1px solid #E2E8F0", padding:"6px 8px", textAlign:"center", color:"#334155" };
+
+function ConversionPreviewTable({ noiseInputType, rawBand, distance_m, resultBand }) {
+  if (noiseInputType === "swl_db") return null;
+  const r = distance_m > 0 ? distance_m : 1;
+  const distanceTerm = round1(10 * Math.log10(4 * Math.PI * r * r));
+  const entryLabel = {
+    swl_dba:"Entered SWL dB(A)",
+    spl_db: "Entered SPL dB",
+    spl_dba:"Entered SPL dB(A)",
+  }[noiseInputType];
+  const rows = [{ label: entryLabel, values: BAND_KEYS.map(k => rawBand?.[k] ?? 0) }];
+  if (noiseInputType === "swl_dba") {
+    rows.push({ label:"A-Weighting Correction", values: BAND_KEYS.map(k => A_WEIGHTING[k]) });
+    rows.push({ label:"Resulting SWL (dB)", values: BAND_KEYS.map(k => resultBand?.[k] ?? 0), highlight:true });
+  } else if (noiseInputType === "spl_db") {
+    rows.push({ label:`+10·log₁₀(4πr²)  @ r=${r}m`, values: BAND_KEYS.map(() => distanceTerm) });
+    rows.push({ label:"Resulting SWL (dB)", values: BAND_KEYS.map(k => resultBand?.[k] ?? 0), highlight:true });
+  } else if (noiseInputType === "spl_dba") {
+    rows.push({ label:"A-Weighting Correction", values: BAND_KEYS.map(k => A_WEIGHTING[k]) });
+    rows.push({ label:"SPL (dB) after A-Weighting", values: BAND_KEYS.map(k => round1((rawBand?.[k]??0) - A_WEIGHTING[k])) });
+    rows.push({ label:`+10·log₁₀(4πr²)  @ r=${r}m`, values: BAND_KEYS.map(() => distanceTerm) });
+    rows.push({ label:"Resulting SWL (dB)", values: BAND_KEYS.map(k => resultBand?.[k] ?? 0), highlight:true });
+  }
+  return (
+    <div style={{ overflowX:"auto", marginTop:14 }}>
+      <table style={{ borderCollapse:"collapse", width:"100%", minWidth:640, fontFamily:"Inter,sans-serif", fontSize:12 }}>
+        <thead>
+          <tr>
+            <th style={{...thS, textAlign:"left"}}>Band</th>
+            {BANDS.map(b => <th key={b} style={thS}>{b}Hz</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i} style={{ background: row.highlight ? "#E3F8F5" : (i%2?"#F8FAFC":"#fff") }}>
+              <td style={{...tdS, fontWeight:600, textAlign:"left", whiteSpace:"nowrap"}}>{row.label}</td>
+              {row.values.map((v, j) => (
+                <td key={j} style={{...tdS, fontWeight:row.highlight?700:500, color:row.highlight?"#0E9F8E":"#334155"}}>{v}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 const EMPTY_BAND = { hz63:0, hz125:0, hz250:0, hz500:0, hz1000:0, hz2000:0, hz4000:0, hz8000:0 };
 
 // Lined duct coefficient tables (per doc: B=CoeffA, C=CoeffB, D=CoeffC)
@@ -55,20 +138,13 @@ const DEFAULT = {
     noiseInputType: "swl_db", measurementDistance_m: 1,
     equipmentId:"", modelNumber:"", ratedKva:0, buildingRef:"", swl_dba:0,
     rawBand: { ...EMPTY_BAND },
+    swl:     { ...EMPTY_BAND },
   },
   room:       { length_m:0, width_m:0, height_m:0 },
   ducts:      [defaultDuct(0)],
   attenuator: { model:"", width_mm:0, height_mm:0, length_mm:0, pressureDrop_pa:0, il:{ ...EMPTY_BAND } },
   receiver:   { description:"", distance_m:3, directivity:2, requiredNC:65, requiredNR:65, required_dba:65, ncNrChoice:"NC" },
 };
-
-/* ─── INPUT TYPE CONFIG ─────────────────────────────────────── */
-const INPUT_TYPES = [
-  { value:"swl_db",  label:"SWL — dB",    desc:"Sound Power Level in dB",    case:"Case 1", note:"Data used directly in calculation. No conversion needed.", color:"#0E9F8E" },
-  { value:"swl_dba", label:"SWL — dB(A)", desc:"Sound Power Level in dB(A)", case:"Case 2", note:"SWL_dB = SWL_dB(A) − A-weighting correction\ne.g. at 500 Hz: 95.6 − (−3.2) = 98.8 dB", color:"#3B82F6" },
-  { value:"spl_db",  label:"SPL — dB",    desc:"Sound Pressure Level in dB",  case:"Case 3", note:"SWL = SPL + 10·log₁₀(4π·r²)\nRequires measurement distance r (metres).", color:"#8B5CF6" },
-  { value:"spl_dba", label:"SPL — dB(A)", desc:"Sound Pressure Level in dB(A)",case:"Case 4", note:"First subtract A-weighting, then:\nSWL = (SPL_dBA − A-weight) + 10·log₁₀(4π·r²)", color:"#F59E0B" },
-];
 
 /* ─── Live Schultz preview ──────────────────────────────────── */
 function liveSchultzOffsets(length_m, width_m, height_m, distance_m) {
@@ -295,10 +371,18 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
       const ducts = Array.isArray(existing.ducts) && existing.ducts.length
         ? existing.ducts.map((d,i) => ({ ...defaultDuct(i), ...d, _showCoeff:false, _showElbow:false }))
         : [defaultDuct(0)];
+      const g = existing.generator || {};
+      const rawBand = g.rawBand ?? g.swl ?? { ...EMPTY_BAND };
+      const noiseInputType = g.noiseInputType ?? "swl_db";
+      const measurementDistance_m = g.measurementDistance_m ?? 1;
       return {
         ...DEFAULT,
-        noisePath:  existing.noisePath  ?? "exhaust",
-        generator:  { ...DEFAULT.generator,  ...existing.generator  },
+        noisePath: existing.noisePath ?? "exhaust",
+        generator: {
+          ...DEFAULT.generator, ...g,
+          rawBand,
+          swl: computeSWLFromRaw(noiseInputType, rawBand, measurementDistance_m),
+        },
         room:       { ...DEFAULT.room,       ...existing.room       },
         ducts,
         attenuator: { ...DEFAULT.attenuator, ...existing.attenuator },
@@ -312,8 +396,17 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
   const [running, setRunning] = useState(false);
 
   // Setters
-  const setG  = (k,v) => setForm(f=>({...f, generator:{...f.generator,[k]:v}}));
-  const setGW = useCallback(v=>setForm(f=>({...f, generator:{...f.generator, rawBand:v}})),[]);
+  const setG = (k,v) => setForm(f => {
+    const g = {...f.generator, [k]:v};
+    // recompute swl whenever input type, rawBand, or distance changes
+    g.swl = computeSWLFromRaw(g.noiseInputType, g.rawBand, g.measurementDistance_m);
+    return {...f, generator:g};
+  });
+  const setGW = useCallback(v => setForm(f => {
+    const g = {...f.generator, rawBand:v};
+    g.swl = computeSWLFromRaw(g.noiseInputType, v, g.measurementDistance_m);
+    return {...f, generator:g};
+  }), []);
   const setRm = (k,v) => setForm(f=>({...f, room:{...f.room,[k]:v}}));
   const setA  = (k,v) => setForm(f=>({...f, attenuator:{...f.attenuator,[k]:v}}));
   const setAW = useCallback(v=>setForm(f=>({...f, attenuator:{...f.attenuator, il:v}})),[]);
@@ -329,8 +422,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
     const d=[...f.ducts]; d[i]={...d[i],coeffA:{...d[i].coeffA,...band}}; return {...f,ducts:d};
   });
 
-  const currentType   = INPUT_TYPES.find(t=>t.value===form.generator.noiseInputType)||INPUT_TYPES[0];
-  const needsDistance = ["spl_db","spl_dba"].includes(form.generator.noiseInputType);
+  const needsDistance = DISTANCE_MODES.includes(form.generator.noiseInputType);
 
   // Live Schultz preview
   const schultzOffsets = useMemo(() =>
@@ -413,64 +505,60 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
       <Section icon={Zap} title="Generator Data" color="#0E9F8E">
         <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
           <div style={g2}>
-            <TextInput label="Equipment ID"  value={form.generator.equipmentId}  onChange={v=>setG("equipmentId",v)}  placeholder="e.g. 1100KVA STANDBY GEN" />
-            <TextInput label="Model Number"  value={form.generator.modelNumber}  onChange={v=>setG("modelNumber",v)}  placeholder="e.g. 12M26D968E200" />
+            <TextInput label="Equipment ID" value={form.generator.equipmentId} onChange={v=>setG("equipmentId",v)} placeholder="e.g. 1100KVA STANDBY GEN"/>
+            <TextInput label="Model Number" value={form.generator.modelNumber}  onChange={v=>setG("modelNumber",v)}  placeholder="e.g. 12M26D968E200"/>
           </div>
           <div style={g3}>
-            <NumInput  label="Rated kVA"     value={form.generator.ratedKva}     onChange={v=>setG("ratedKva",v)}     unit="kVA" step={1} />
-            <NumInput  label="Overall SWL"   value={form.generator.swl_dba}      onChange={v=>setG("swl_dba",v)}      unit="dB(A)" />
-            <TextInput label="Building Ref"  value={form.generator.buildingRef}  onChange={v=>setG("buildingRef",v)}  placeholder="e.g. Ground Floor" />
+            <NumInput  label="Rated kVA"    value={form.generator.ratedKva}    onChange={v=>setG("ratedKva",v)}    unit="kVA" step={1}/>
+            <NumInput  label="Overall SWL"  value={form.generator.swl_dba}     onChange={v=>setG("swl_dba",v)}     unit="dB(A)" step={0.1}/>
+            <TextInput label="Building Ref" value={form.generator.buildingRef} onChange={v=>setG("buildingRef",v)} placeholder="e.g. Ground Floor"/>
           </div>
 
-          {/* Input Type Selector */}
-          <div style={{ background:"#F8FAFC", borderRadius:10, border:"1px solid #E2E8F0", padding:"14px" }}>
-            <p style={{ fontSize:12, fontWeight:700, color:"#334155", fontFamily:"Plus Jakarta Sans,sans-serif", margin:"0 0 10px" }}>Sound Data Input Type</p>
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}>
-              {INPUT_TYPES.map(t => (
+          {/* Noise Data Type — simple segmented buttons (same as existing form) */}
+          <div>
+            <p style={{ fontSize:12, fontWeight:700, color:"#334155", fontFamily:"Plus Jakarta Sans,sans-serif", margin:"0 0 8px" }}>Noise Data Type</p>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {NOISE_INPUT_TYPES.map(t => (
                 <button key={t.value} type="button" onClick={()=>setG("noiseInputType",t.value)}
                   style={{
-                    padding:"10px 12px", borderRadius:9, textAlign:"left",
-                    border:`1.5px solid ${form.generator.noiseInputType===t.value?t.color:"#E2E8F0"}`,
-                    background:form.generator.noiseInputType===t.value?`${t.color}12`:"#fff",
-                    cursor:"pointer", transition:"all .15s",
-                  }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
-                    <span style={{ fontSize:9.5, fontWeight:700, padding:"1px 6px", borderRadius:99, background:t.color, color:"#fff", fontFamily:"Inter,sans-serif" }}>{t.case}</span>
-                    <span style={{ fontSize:12.5, fontWeight:700, color:form.generator.noiseInputType===t.value?t.color:"#334155", fontFamily:"Inter,sans-serif" }}>{t.label}</span>
-                  </div>
-                  <p style={{ fontSize:11, color:"#64748B", fontFamily:"Inter,sans-serif", margin:0 }}>{t.desc}</p>
-                </button>
+                    padding:"7px 14px", borderRadius:8,
+                    border:`1.5px solid ${form.generator.noiseInputType===t.value?"#0E9F8E":"#E2E8F0"}`,
+                    background:form.generator.noiseInputType===t.value?"#E3F8F5":"#fff",
+                    color:form.generator.noiseInputType===t.value?"#0E9F8E":"#64748B",
+                    fontSize:13, fontWeight:600, cursor:"pointer",
+                    fontFamily:"Inter,sans-serif", transition:"all .15s",
+                  }}>{t.label}</button>
               ))}
             </div>
-            <div style={{ padding:"10px 12px", background:`${currentType.color}10`, border:`1px solid ${currentType.color}30`, borderRadius:8, display:"flex", gap:8 }}>
-              <Info size={14} color={currentType.color} style={{ flexShrink:0, marginTop:1 }} />
-              <div>
-                <p style={{ fontSize:12, fontWeight:700, color:currentType.color, fontFamily:"Inter,sans-serif", margin:"0 0 3px" }}>{currentType.case}: {currentType.label}</p>
-                <p style={{ fontSize:11.5, color:"#475569", fontFamily:"Inter,sans-serif", margin:0, whiteSpace:"pre-line" }}>{currentType.note}</p>
-              </div>
-            </div>
-            {needsDistance && (
-              <div style={{ marginTop:10 }}>
-                <NumInput label="Measurement Distance r" value={form.generator.measurementDistance_m||1} onChange={v=>setG("measurementDistance_m",v)} unit="m" step={0.5} min={0.1} />
-              </div>
-            )}
           </div>
 
+          {/* Measurement distance — only for SPL modes */}
+          {needsDistance && (
+            <div style={{ maxWidth:220 }}>
+              <NumInput label="Measurement Distance (r)" value={form.generator.measurementDistance_m}
+                onChange={v=>setG("measurementDistance_m",v)} unit="m" step={0.1} min={0.1}/>
+            </div>
+          )}
+
           {/* Octave Band Input */}
-          <div style={{ background:"#F8FAFC", borderRadius:10, border:"1px solid #E2E8F0", padding:"14px" }}>
+          <div style={{ background:"#F8FAFC", borderRadius:10, padding:"14px 16px", border:"1px solid #E2E8F0" }}>
             <BandGrid
-              label={`Octave Band Values — Enter as ${currentType.label} (${currentType.desc})`}
+              label={{
+                swl_dba:"SWL per Band — dB(A)",
+                spl_db: "SPL per Band — dB @ measurement distance r",
+                spl_dba:"SPL per Band — dB(A) @ measurement distance r",
+                swl_db: "SWL per Band — dB re 1pW",
+              }[form.generator.noiseInputType]}
               values={form.generator.rawBand}
               onChange={setGW}
-              note="Click a cell, type the value (e.g. 110), press Enter or Tab to move to next band."
             />
-            {form.generator.noiseInputType==="swl_dba" && (
-              <div style={{ marginTop:12, padding:"8px 10px", background:"#EFF6FF", borderRadius:7, border:"1px solid #BFDBFE" }}>
-                <p style={{ fontSize:11.5, color:"#1E40AF", fontFamily:"Inter,sans-serif", margin:0 }}>
-                  ℹ️ The A-weighting correction shown in each column header will be subtracted arithmetically from your values during calculation. e.g. at 500 Hz: your_value − (−3.2) = your_value + 3.2
-                </p>
-              </div>
-            )}
+            {/* Conversion preview table — shows step-by-step conversion for non-SWL-dB types */}
+            <ConversionPreviewTable
+              noiseInputType={form.generator.noiseInputType}
+              rawBand={form.generator.rawBand}
+              distance_m={form.generator.measurementDistance_m}
+              resultBand={form.generator.swl}
+            />
           </div>
         </div>
       </Section>
