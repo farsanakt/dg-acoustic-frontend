@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Zap, Box, Wind, Gauge, MapPin,
+  Zap, Box, Wind, Gauge, MapPin, Waves,
   ChevronDown, ChevronUp, Loader2, Calculator,
   Info, Plus, Trash2,
 } from "lucide-react";
@@ -97,21 +97,18 @@ function ConversionPreviewTable({ noiseInputType, rawBand, distance_m, resultBan
 
 const EMPTY_BAND = { hz63:0, hz125:0, hz250:0, hz500:0, hz1000:0, hz2000:0, hz4000:0, hz8000:0 };
 
-// Lined duct coefficient tables (per doc: B=CoeffA, C=CoeffB, D=CoeffC)
-const LINED_COEFFS = {
-  "1inch": {
-    A: [0.04, 0.08, 0.14, 0.22, 0.32, 0.40, 0.53, 0.53],
-    B: [1.959, 1.41, 0.824, 0.5, 0.695, 0.802, 0.451, 0.219],
-    C: [0.917, 0.941, 1.079, 1.087, 0, 0, 0, 0],
-  },
-  "2inch": {
-    A: [0.04, 0.08, 0.14, 0.22, 0.32, 0.40, 0.53, 0.53],
-    B: [1.959, 1.41, 0.824, 0.5, 0.695, 0.802, 0.451, 0.219],
-    C: [0.917, 0.941, 1.079, 1.087, 0, 0, 0, 0],
-  },
+// ── Lined duct default coefficients (from doc image) ──────────
+// B = Coeff A (manufacturer), C = Coeff B (constant), D = Coeff C (constant)
+const LINED_DEFAULT = {
+  A: [0.04, 0.08, 0.14, 0.22, 0.32, 0.40, 0.53, 0.53],   // Coeff A (B in formula)
+  B: [1.959, 1.41, 0.824, 0.5, 0.695, 0.802, 0.451, 0.219], // Coeff B (C in formula)
+  C: [0.917, 0.941, 1.079, 1.087, 0, 0, 0, 0],              // Coeff C (D in formula)
 };
 
+// ── Elbow IL lookup tables ─────────────────────────────────────
+// Rows: width ≤200, 201-400, 401-800, ≥801 mm; Cols: 63 125 250 500 1k 2k 4k 8k Hz
 const ELBOW_WIDTH_RANGES = ["≤200 mm", "201–400 mm", "401–800 mm", "≥801 mm"];
+const ELBOW_WIDTH_BREAKS = [200, 400, 800]; // upper bounds for each row except last
 const ELBOW_UNLINED_TBL = [
   [0,0,0,1,5,8,4,3],[0,1,5,5,8,4,3,3],[0,5,5,8,4,3,3,3],[1,5,8,4,3,3,3,3],
 ];
@@ -119,17 +116,105 @@ const ELBOW_LINED_TBL = [
   [0,0,0,1,6,11,10,10],[0,1,6,6,11,10,10,10],[0,6,6,11,10,10,10,10],[1,6,11,10,10,10,10,10],
 ];
 
+// ── Live duct IL calculation ───────────────────────────────────
+function mmToFt(mm) { return mm / 304.8; }
+function mToFt(m)   { return m  / 0.3048; }
+
+function calcUnlinedIL(width_mm, height_mm, length_m) {
+  const W = mmToFt(width_mm||0);
+  const H = mmToFt(height_mm||0);
+  const L = mToFt(length_m||0);
+  if (W <= 0 || H <= 0 || L <= 0) return null;
+  const P = 2 * (W + H);
+  const S = W * H;
+  const PS = P / S;
+  return BANDS.map(f => {
+    let il;
+    if (PS >= 3) {
+      il = -1 * 17.0 * Math.pow(PS, -0.25) * Math.pow(f, -0.85) * L;
+    } else {
+      il = -1 * 1.64 * Math.pow(PS, 0.73) * Math.pow(f, -0.58) * L;
+    }
+    return Math.round(il * 100) / 100;
+  });
+}
+
+function calcLinedIL(width_mm, height_mm, length_m, thickness_in, coeffAOverride) {
+  const W = mmToFt(width_mm||0);
+  const H = mmToFt(height_mm||0);
+  const L = mToFt(length_m||0);
+  const t = Number(thickness_in) || 1;
+  if (W <= 0 || H <= 0 || L <= 0) return null;
+  const P = 2 * (W + H);
+  const S = W * H;
+  const PS = P / S;
+  return BANDS.map((_, i) => {
+    const B = (coeffAOverride?.[BAND_KEYS[i]] && coeffAOverride[BAND_KEYS[i]] !== 0)
+      ? coeffAOverride[BAND_KEYS[i]]
+      : LINED_DEFAULT.A[i];
+    const C = LINED_DEFAULT.B[i];
+    const D = LINED_DEFAULT.C[i];
+    const il = B * Math.pow(PS, C) * Math.pow(t, D) * L;
+    return Math.round(il * 100) / 100;
+  });
+}
+
+function getElbowRowIdx(width_mm) {
+  const w = Number(width_mm)||0;
+  if (w <= 200) return 0;
+  if (w <= 400) return 1;
+  if (w <= 800) return 2;
+  return 3;
+}
+
+function calcElbowIL(width_mm, elbows, lined) {
+  const n = Number(elbows)||0;
+  if (n <= 0) return null;
+  const ri = getElbowRowIdx(width_mm);
+  const tbl = lined ? ELBOW_LINED_TBL : ELBOW_UNLINED_TBL;
+  return tbl[ri].map(v => v * n);
+}
+
+function combineDuctIL(ductIL, elbowIL) {
+  if (!ductIL && !elbowIL) return null;
+  return BAND_KEYS.map((_, i) => {
+    const d = ductIL  ? ductIL[i]  : 0;
+    const e = elbowIL ? elbowIL[i] : 0;
+    return Math.round((d + e) * 100) / 100;
+  });
+}
+
+// ── End Reflection Loss ───────────────────────────────────────
+// ERL = 10·log₁₀[ 1 + (a1·co / π·f·D)^a2 ] − 1
+// a1=0.7, a2=2, co=1125.33 ft/s, D=√(4·Area) in ft
+const ERL_A1 = 0.7;
+const ERL_A2 = 2;
+const ERL_CO = 1125.33; // ft/s
+
+function calcERL(width_mm, height_mm) {
+  const W = mmToFt(width_mm||0);
+  const H = mmToFt(height_mm||0);
+  if (W <= 0 || H <= 0) return null;
+  const area = W * H;
+  const D = Math.sqrt(4 * area / Math.PI);
+  return BANDS.map(f => {
+    const inner = (ERL_A1 * ERL_CO) / (Math.PI * f * D);
+    const erl = 10 * Math.log10(1 + Math.pow(inner, ERL_A2)) - 1;
+    return Math.round(erl * 100) / 100;
+  });
+}
+
 const defaultDuct = (idx = 0) => ({
-  label:           `Duct ${idx + 1}`,
-  width_mm:        0,
-  height_mm:       0,
-  length_m:        0,
-  lining:          "unlined",
-  elbows:          0,
-  terminationType: "wall",
-  coeffA:          { ...EMPTY_BAND },
-  _showCoeff:      false,
-  _showElbow:      false,
+  label:            `Duct ${idx + 1}`,
+  width_mm:         0,
+  height_mm:        0,
+  length_m:         0,
+  lining:           "unlined",
+  liningThickness_in: 1,
+  elbows:           0,
+  terminationType:  "wall",
+  coeffA:           { ...EMPTY_BAND },
+  _showCoeff:       false,
 });
 
 const DEFAULT = {
@@ -140,8 +225,9 @@ const DEFAULT = {
     rawBand: { ...EMPTY_BAND },
     swl:     { ...EMPTY_BAND },
   },
-  room:       { length_m:0, width_m:0, height_m:0 },
+  room:       { length_m:0, width_m:0, height_m:0, distance_m:3 },
   ducts:      [defaultDuct(0)],
+  erl:        { width_mm:0, height_mm:0 },
   attenuator: { model:"", width_mm:0, height_mm:0, length_mm:0, pressureDrop_pa:0, il:{ ...EMPTY_BAND } },
   receiver:   { description:"", distance_m:3, directivity:2, requiredNC:65, requiredNR:65, required_dba:65, ncNrChoice:"NC" },
 };
@@ -157,7 +243,7 @@ function liveSchultzOffsets(length_m, width_m, height_m, distance_m) {
 }
 
 /* ─── BAND INPUT — fully uncontrolled, commits on blur ─────── */
-function BandInput({ bandKey, value, onCommit }) {
+function BandInput({ bandKey, value, onCommit, onLiveCommit }) {
   const [local, setLocal] = useState(String(value ?? 0));
   const [focus, setFocus] = useState(false);
   const prevVal = useRef(value);
@@ -172,7 +258,13 @@ function BandInput({ bandKey, value, onCommit }) {
       type="number"
       value={local}
       step="0.1"
-      onChange={e => setLocal(e.target.value)}
+      onChange={e => {
+        setLocal(e.target.value);
+        if (onLiveCommit) {
+          const f = parseFloat(e.target.value);
+          if (!isNaN(f)) onLiveCommit(f);
+        }
+      }}
       onFocus={e => { setFocus(true); setLocal(String(value??0)); setTimeout(()=>e.target.select(),0); }}
       onBlur={() => {
         setFocus(false);
@@ -194,8 +286,9 @@ function BandInput({ bandKey, value, onCommit }) {
   );
 }
 
-function BandGrid({ label, values, onChange, note, readOnly, highlightColor }) {
+function BandGrid({ label, values, onChange, onLiveChange, note, readOnly, highlightColor }) {
   const handleCommit = useCallback((k,v) => onChange({ ...values, [k]:v }), [values, onChange]);
+  const handleLive   = useCallback((k,v) => onLiveChange && onLiveChange({ ...values, [k]:v }), [values, onLiveChange]);
   return (
     <div>
       {label && (
@@ -245,7 +338,11 @@ function BandGrid({ label, values, onChange, note, readOnly, highlightColor }) {
                       {typeof values[k] === "number" ? values[k].toFixed(1) : (values[k] ?? "—")}
                     </div>
                   ) : (
-                    <BandInput bandKey={k} value={values[k]??0} onCommit={v=>handleCommit(k,v)} />
+                    <BandInput
+                      bandKey={k} value={values[k]??0}
+                      onCommit={v=>handleCommit(k,v)}
+                      onLiveCommit={onLiveChange ? v=>handleLive(k,v) : undefined}
+                    />
                   )}
                 </td>
               ))}
@@ -383,8 +480,9 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
           rawBand,
           swl: computeSWLFromRaw(noiseInputType, rawBand, measurementDistance_m),
         },
-        room:       { ...DEFAULT.room,       ...existing.room       },
+        room:       { ...DEFAULT.room, distance_m:3, ...existing.room },
         ducts,
+        erl:        { ...DEFAULT.erl, ...existing.erl },
         attenuator: { ...DEFAULT.attenuator, ...existing.attenuator },
         receiver:   { ...DEFAULT.receiver,   ...existing.receiver   },
       };
@@ -407,8 +505,9 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
     g.swl = computeSWLFromRaw(g.noiseInputType, v, g.measurementDistance_m);
     return {...f, generator:g};
   }), []);
-  const setRm = (k,v) => setForm(f=>({...f, room:{...f.room,[k]:v}}));
-  const setA  = (k,v) => setForm(f=>({...f, attenuator:{...f.attenuator,[k]:v}}));
+  const setRm  = (k,v) => setForm(f=>({...f, room:{...f.room,[k]:v}}));
+  const setErl = (k,v) => setForm(f=>({...f, erl:{...f.erl,[k]:v}}));
+  const setA   = (k,v) => setForm(f=>({...f, attenuator:{...f.attenuator,[k]:v}}));
   const setAW = useCallback(v=>setForm(f=>({...f, attenuator:{...f.attenuator, il:v}})),[]);
   const setRc = (k,v) => setForm(f=>({...f, receiver:{...f.receiver,[k]:v}}));
 
@@ -426,8 +525,8 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
 
   // Live Schultz preview
   const schultzOffsets = useMemo(() =>
-    liveSchultzOffsets(form.room.length_m, form.room.width_m, form.room.height_m, form.receiver.distance_m),
-    [form.room.length_m, form.room.width_m, form.room.height_m, form.receiver.distance_m]
+    liveSchultzOffsets(form.room.length_m, form.room.width_m, form.room.height_m, form.room.distance_m),
+    [form.room.length_m, form.room.width_m, form.room.height_m, form.room.distance_m]
   );
   const volume = (form.room.length_m||0)*(form.room.width_m||0)*(form.room.height_m||0);
 
@@ -563,185 +662,197 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </div>
       </Section>
 
-      {/* ── 2. Plant Room / Space Room ── */}
-      <Section icon={Box} title="Plant Room / Space Room" color="#3B82F6"
-        badge={volume > 0 ? `V = ${volume.toFixed(1)} m³` : null}>
-        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          <div style={g3}>
-            <NumInput label="Length"                  value={form.room.length_m} onChange={v=>setRm("length_m",v)} onLiveChange={v=>setRm("length_m",v)} unit="m" />
-            <NumInput label="Width"                   value={form.room.width_m}  onChange={v=>setRm("width_m",v)}  onLiveChange={v=>setRm("width_m",v)}  unit="m" />
-            <NumInput label="Height / Ceiling Height" value={form.room.height_m} onChange={v=>setRm("height_m",v)} onLiveChange={v=>setRm("height_m",v)} unit="m" />
-          </div>
-
-          <div style={{ padding:"9px 12px", background:"#EFF6FF", borderRadius:8, border:"1px solid #BFDBFE" }}>
-            <p style={{ fontSize:12, color:"#1E40AF", fontFamily:"Inter,sans-serif", margin:0 }}>
-              💡 Leave all dimensions as <strong>0</strong> to use free-field distance model instead of Schultz Room Equation.
-              When volume &gt; 0: <em>Lp = Lw − 10·log(r) − 5·log(V) − 3·log(f) + 12</em> (SI, k=12)
-            </p>
-          </div>
-
-          {/* Live Space Room Effect preview */}
-          {volume > 0 && schultzBandObj && (
-            <div style={{ background:"#F0FDF4", borderRadius:10, border:"1px solid #86EFAC", padding:"14px" }}>
-              <p style={{ fontSize:12, fontWeight:700, color:"#15803D", fontFamily:"Plus Jakarta Sans,sans-serif", margin:"0 0 6px", display:"flex", alignItems:"center", gap:6 }}>
-                <span style={{ fontSize:15 }}>📐</span> Space Room Effect — Schultz Offset per Band (live preview)
-              </p>
-              <p style={{ fontSize:11, color:"#4B5563", fontFamily:"Inter,sans-serif", margin:"0 0 10px" }}>
-                These offsets are added to SWL-after-ducts per band to give Lp at receiver.
-                Distance used: <strong>{form.receiver.distance_m} m</strong> · Volume: <strong>{volume.toFixed(2)} m³</strong>
-              </p>
-              <BandGrid
-                values={schultzBandObj}
-                onChange={()=>{}}
-                readOnly
-                highlightColor="#16A34A"
-              />
-            </div>
-          )}
-        </div>
-      </Section>
-
-      {/* ── 3. Duct(s) ── */}
+      {/* ── 2. Duct(s) ── */}
       <Section icon={Wind} title={`Duct(s) / Opening`} color="#8B5CF6"
         badge={`${form.ducts.length} duct${form.ducts.length!==1?"s":""}`}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
 
-          {form.ducts.map((duct, idx) => (
-            <div key={idx} style={{
-              border:"1px solid #E9D5FF", borderRadius:10,
-              background:"#FAFAFF", overflow:"hidden",
-            }}>
-              {/* Duct header */}
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 14px", background:"#8B5CF60D", borderBottom:"1px solid #E9D5FF" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <span style={{ fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:99, background:"#8B5CF622", color:"#7C3AED", fontFamily:"Inter,sans-serif" }}>#{idx+1}</span>
-                  <input
-                    value={duct.label}
-                    onChange={e=>patchDuct(idx,{label:e.target.value})}
-                    style={{ border:"none", background:"transparent", fontSize:13, fontWeight:700, color:"#0F172A", outline:"none", fontFamily:"Inter,sans-serif", width:130 }}
-                  />
-                </div>
-                {form.ducts.length > 1 && (
-                  <button type="button" onClick={()=>removeDuct(idx)}
-                    style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:6, border:"1px solid #FCA5A5", background:"#FEF2F2", color:"#DC2626", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"Inter,sans-serif" }}>
-                    <Trash2 size={12} /> Remove
-                  </button>
-                )}
-              </div>
+          {form.ducts.map((duct, idx) => {
+            const lined   = duct.lining === "lined";
+            const ductIL  = lined
+              ? calcLinedIL(duct.width_mm, duct.height_mm, duct.length_m, duct.liningThickness_in, duct.coeffA)
+              : calcUnlinedIL(duct.width_mm, duct.height_mm, duct.length_m);
+            const elbowIL = calcElbowIL(duct.width_mm, duct.elbows, lined);
+            const totalIL = combineDuctIL(ductIL, elbowIL);
+            const ductBandObj  = ductIL  ? Object.fromEntries(BAND_KEYS.map((k,i)=>[k, ductIL[i]]))  : null;
+            const elbowBandObj = elbowIL ? Object.fromEntries(BAND_KEYS.map((k,i)=>[k, elbowIL[i]])) : null;
+            const totalBandObj = totalIL ? Object.fromEntries(BAND_KEYS.map((k,i)=>[k, totalIL[i]])) : null;
+            const ri = getElbowRowIdx(duct.width_mm);
+            const elbowTbl = lined ? ELBOW_LINED_TBL : ELBOW_UNLINED_TBL;
+            const hasGeom = Number(duct.width_mm)>0 && Number(duct.height_mm)>0 && Number(duct.length_m)>0;
 
-              <div style={{ padding:"14px" }}>
-                {/* Geometry */}
-                <div style={g4}>
-                  <NumInput label="Width"  value={duct.width_mm}  onChange={v=>patchDuct(idx,{width_mm:v})}  unit="mm" step={10} />
-                  <NumInput label="Height" value={duct.height_mm} onChange={v=>patchDuct(idx,{height_mm:v})} unit="mm" step={10} />
-                  <NumInput label="Length" value={duct.length_m}  onChange={v=>patchDuct(idx,{length_m:v})}  unit="m"  step={0.5} />
-                  <NumInput label="No. of 90° Elbows" value={duct.elbows} onChange={v=>patchDuct(idx,{elbows:v})} step={1} min={0} />
-                </div>
-
-                <div style={{ ...g2, marginTop:10 }}>
-                  <SelectInput label="Duct Lining" value={duct.lining} onChange={v=>patchDuct(idx,{lining:v})}
-                    options={[{value:"unlined",label:"Unlined"},{value:"1inch",label:"1-inch lined"},{value:"2inch",label:"2-inch lined"}]} />
-                  <SelectInput label="Termination" value={duct.terminationType} onChange={v=>patchDuct(idx,{terminationType:v})}
-                    options={[{value:"wall",label:"In wall / louver"},{value:"free_space",label:"Free space"}]} />
-                </div>
-
-                {/* Lined duct coefficients */}
-                {duct.lining !== "unlined" && (
-                  <div style={{ marginTop:12 }}>
-                    <button type="button" onClick={()=>patchDuct(idx,{_showCoeff:!duct._showCoeff})}
-                      style={{ display:"flex", alignItems:"center", gap:6, fontSize:11.5, fontWeight:600, color:"#7C3AED", background:"#8B5CF610", border:"1px solid #DDD6FE", borderRadius:7, padding:"5px 12px", cursor:"pointer", fontFamily:"Inter,sans-serif" }}>
-                      {duct._showCoeff ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
-                      {duct._showCoeff?"Hide":"Show"} Lined Duct Coefficients (Coeff A / B / C)
+            return (
+              <div key={idx} style={{ border:"1px solid #E9D5FF", borderRadius:10, background:"#FAFAFF", overflow:"hidden" }}>
+                {/* Duct header */}
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 14px", background:"#8B5CF60D", borderBottom:"1px solid #E9D5FF" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:99, background:"#8B5CF622", color:"#7C3AED", fontFamily:"Inter,sans-serif" }}>#{idx+1}</span>
+                    <input
+                      value={duct.label}
+                      onChange={e=>patchDuct(idx,{label:e.target.value})}
+                      style={{ border:"none", background:"transparent", fontSize:13, fontWeight:700, color:"#0F172A", outline:"none", fontFamily:"Inter,sans-serif", width:130 }}
+                    />
+                  </div>
+                  {form.ducts.length > 1 && (
+                    <button type="button" onClick={()=>removeDuct(idx)}
+                      style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:6, border:"1px solid #FCA5A5", background:"#FEF2F2", color:"#DC2626", fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:"Inter,sans-serif" }}>
+                      <Trash2 size={12} /> Remove
                     </button>
+                  )}
+                </div>
 
-                    {duct._showCoeff && (
-                      <div style={{ marginTop:8, background:"#F8F5FF", borderRadius:8, border:"1px solid #DDD6FE", padding:12 }}>
-                        <p style={{ fontSize:11.5, color:"#4C1D95", fontFamily:"Inter,sans-serif", margin:"0 0 10px", lineHeight:1.5 }}>
-                          <strong>Formula:</strong> IL = <em>B × (P/S)^C × t^D × L</em><br/>
-                          <strong>B</strong> = Coefficient A (from manufacturer) · <strong>C</strong> = Coefficient B (constant) · <strong>D</strong> = Coefficient C (constant)<br/>
-                          t = lining thickness (inches) · L = duct length (ft)
-                        </p>
+                <div style={{ padding:"14px", display:"flex", flexDirection:"column", gap:12 }}>
 
-                        {[
-                          ["Coeff A  (B in formula) — Manufacturer value", LINED_COEFFS[duct.lining]?.A],
-                          ["Coeff B  (C in formula) — Constant",           LINED_COEFFS[duct.lining]?.B],
-                          ["Coeff C  (D in formula) — Constant",           LINED_COEFFS[duct.lining]?.C],
-                        ].map(([lbl,vals]) => (
-                          <div key={lbl} style={{ marginBottom:10 }}>
-                            <p style={{ fontSize:11, fontWeight:700, color:"#6D28D9", fontFamily:"Inter,sans-serif", margin:"0 0 6px" }}>{lbl}</p>
-                            <div style={{ overflowX:"auto" }}>
-                              <table style={{ borderCollapse:"collapse", minWidth:480 }}>
-                                <thead>
-                                  <tr>{BANDS.map(b=><th key={b} style={{ padding:"4px 8px", textAlign:"center", fontSize:11, fontWeight:700, color:"#7C3AED", background:"#EDE9FE", borderRadius:4, minWidth:60 }}>{b} Hz</th>)}</tr>
-                                </thead>
-                                <tbody>
-                                  <tr>{vals?.map((v,i)=><td key={i} style={{ padding:"5px 4px", textAlign:"center", fontSize:12, fontWeight:600, color:"#4C1D95", border:"1px solid #DDD6FE" }}>{v}</td>)}</tr>
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
+                  {/* ① Geometry — all with onLiveChange for instant preview */}
+                  <div style={g4}>
+                    <NumInput label="Width"  value={duct.width_mm}  onChange={v=>patchDuct(idx,{width_mm:v})}  onLiveChange={v=>patchDuct(idx,{width_mm:v})}  unit="mm" step={10} />
+                    <NumInput label="Height" value={duct.height_mm} onChange={v=>patchDuct(idx,{height_mm:v})} onLiveChange={v=>patchDuct(idx,{height_mm:v})} unit="mm" step={10} />
+                    <NumInput label="Length" value={duct.length_m}  onChange={v=>patchDuct(idx,{length_m:v})}  onLiveChange={v=>patchDuct(idx,{length_m:v})}  unit="m"  step={0.5} />
+                    <NumInput label="No. of 90° Elbows" value={duct.elbows} onChange={v=>patchDuct(idx,{elbows:v})} onLiveChange={v=>patchDuct(idx,{elbows:v})} step={1} min={0} />
+                  </div>
+
+                  {/* ② Lining + Termination */}
+                  <div style={g2}>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                      <label style={{ fontSize:11.5, fontWeight:600, color:"#475569", fontFamily:"Inter,sans-serif" }}>Duct Lining</label>
+                      <div style={{ display:"flex", gap:8 }}>
+                        {[{value:"unlined",label:"Unlined"},{value:"lined",label:"Lined"}].map(opt=>(
+                          <button key={opt.value} type="button" onClick={()=>patchDuct(idx,{lining:opt.value})}
+                            style={{
+                              padding:"7px 18px", borderRadius:8, fontSize:13, fontWeight:600, cursor:"pointer",
+                              fontFamily:"Inter,sans-serif", transition:"all .15s",
+                              border:`1.5px solid ${duct.lining===opt.value?"#8B5CF6":"#E2E8F0"}`,
+                              background:duct.lining===opt.value?"#EDE9FE":"#fff",
+                              color:duct.lining===opt.value?"#7C3AED":"#64748B",
+                            }}>{opt.label}</button>
                         ))}
+                      </div>
+                    </div>
+                    <SelectInput label="Termination" value={duct.terminationType} onChange={v=>patchDuct(idx,{terminationType:v})}
+                      options={[{value:"wall",label:"In wall / louver"},{value:"free_space",label:"Free space"}]} />
+                  </div>
 
-                        <div style={{ marginTop:10 }}>
-                          <p style={{ fontSize:11, fontWeight:700, color:"#2563EB", fontFamily:"Inter,sans-serif", margin:"0 0 6px" }}>
-                            Override Coeff A (B) per band — leave 0 to use default table above
+                  {/* ③ Lined duct extras: thickness + Coeff A override */}
+                  {lined && (
+                    <div style={{ background:"#F8F5FF", borderRadius:8, border:"1px solid #DDD6FE", padding:12, display:"flex", flexDirection:"column", gap:10 }}>
+                      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
+                        <div>
+                          <p style={{ fontSize:12, fontWeight:700, color:"#4C1D95", fontFamily:"Inter,sans-serif", margin:"0 0 2px" }}>
+                            Formula: IL = B × (P/S)<sup>C</sup> × t<sup>D</sup> × l
                           </p>
-                          <BandGrid
-                            values={duct.coeffA}
-                            onChange={v=>patchDuctCoeffA(idx,v)}
-                            highlightColor="#7C3AED"
-                          />
+                          <p style={{ fontSize:11, color:"#6D28D9", fontFamily:"Inter,sans-serif", margin:0, lineHeight:1.5 }}>
+                            B = Coeff A (manufacturer) · C = Coeff B (constant) · D = Coeff C (constant)<br/>
+                            t = lining thickness (in) · l = duct length (ft)
+                          </p>
+                        </div>
+                        <div style={{ minWidth:160 }}>
+                          <NumInput label="Lining Thickness" value={duct.liningThickness_in}
+                            onChange={v=>patchDuct(idx,{liningThickness_in:v})}
+                            onLiveChange={v=>patchDuct(idx,{liningThickness_in:v})}
+                            unit="in" step={0.5} min={0.5}/>
                         </div>
                       </div>
-                    )}
-                  </div>
-                )}
 
-                {/* Elbow IL lookup */}
-                {Number(duct.elbows) > 0 && (
-                  <div style={{ marginTop:10 }}>
-                    <button type="button" onClick={()=>patchDuct(idx,{_showElbow:!duct._showElbow})}
-                      style={{ display:"flex", alignItems:"center", gap:6, fontSize:11.5, fontWeight:600, color:"#92400E", background:"#FFFBEB", border:"1px solid #FDE68A", borderRadius:7, padding:"5px 12px", cursor:"pointer", fontFamily:"Inter,sans-serif" }}>
-                      {duct._showElbow ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
-                      {duct._showElbow?"Hide":"Show"} Elbow IL Lookup Table
-                    </button>
-
-                    {duct._showElbow && (() => {
-                      const lined = duct.lining !== "unlined";
-                      const tbl   = lined ? ELBOW_LINED_TBL : ELBOW_UNLINED_TBL;
-                      const w     = Number(duct.width_mm)||0;
-                      const ri    = w<=200?0:w<=400?1:w<=800?2:3;
-                      return (
-                        <div style={{ marginTop:8, background:"#FFFBEB", borderRadius:8, border:"1px solid #FDE68A", padding:12 }}>
-                          <p style={{ fontSize:11.5, fontWeight:700, color:"#92400E", margin:"0 0 8px", fontFamily:"Inter,sans-serif" }}>
-                            Elbow IL — {lined?"lined":"unlined"} · per 90° elbow (dB) · highlighted row applies
-                          </p>
+                      {/* Default coefficient tables */}
+                      {[
+                        ["Coeff A (B) — Manufacturer value", LINED_DEFAULT.A],
+                        ["Coeff B (C) — Constant",           LINED_DEFAULT.B],
+                        ["Coeff C (D) — Constant",           LINED_DEFAULT.C],
+                      ].map(([lbl, vals]) => (
+                        <div key={lbl}>
+                          <p style={{ fontSize:10.5, fontWeight:700, color:"#6D28D9", fontFamily:"Inter,sans-serif", margin:"0 0 5px" }}>{lbl}</p>
                           <div style={{ overflowX:"auto" }}>
-                            <table style={{ borderCollapse:"collapse", minWidth:520 }}>
-                              <thead>
-                                <tr>
-                                  <th style={{ padding:"5px 10px", textAlign:"left", fontSize:11, fontWeight:700, color:"#78350F", background:"#FDE68A", border:"1px solid #FCD34D" }}>Width range</th>
-                                  {BANDS.map(b=><th key={b} style={{ padding:"5px 8px", textAlign:"center", fontSize:11, fontWeight:700, color:"#78350F", background:"#FDE68A", border:"1px solid #FCD34D" }}>{b} Hz</th>)}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {tbl.map((row,r)=>(
-                                  <tr key={r} style={{ background: r===ri?"#FEF3C7":"#fff" }}>
-                                    <td style={{ padding:"5px 10px", fontSize:12, fontWeight: r===ri?700:400, color:"#78350F", border:"1px solid #FDE68A" }}>{ELBOW_WIDTH_RANGES[r]}</td>
-                                    {row.map((v,c)=><td key={c} style={{ padding:"5px 8px", textAlign:"center", fontSize:12, fontWeight:r===ri?700:400, color: r===ri?"#92400E":"#374151", border:"1px solid #FDE68A" }}>{v}</td>)}
-                                  </tr>
-                                ))}
-                              </tbody>
+                            <table style={{ borderCollapse:"collapse", minWidth:480 }}>
+                              <thead><tr>{BANDS.map(b=><th key={b} style={{ padding:"3px 8px", textAlign:"center", fontSize:10.5, fontWeight:700, color:"#7C3AED", background:"#EDE9FE", border:"1px solid #DDD6FE", minWidth:56 }}>{b} Hz</th>)}</tr></thead>
+                              <tbody><tr>{vals.map((v,i)=><td key={i} style={{ padding:"4px 6px", textAlign:"center", fontSize:11.5, fontWeight:600, color:"#4C1D95", border:"1px solid #DDD6FE", background:"#FAF8FF" }}>{v}</td>)}</tr></tbody>
                             </table>
                           </div>
                         </div>
-                      );
-                    })()}
-                  </div>
-                )}
+                      ))}
+
+                      {/* Coeff A override — live */}
+                      <div>
+                        <p style={{ fontSize:10.5, fontWeight:700, color:"#2563EB", fontFamily:"Inter,sans-serif", margin:"0 0 5px" }}>
+                          Override Coeff A (B) per band — enter 0 to use default table above
+                        </p>
+                        <BandGrid
+                          values={duct.coeffA}
+                          onChange={v=>patchDuctCoeffA(idx,v)}
+                          onLiveChange={v=>patchDuctCoeffA(idx,v)}
+                          highlightColor="#7C3AED"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ④ Elbow IL table — always visible when elbows > 0 */}
+                  {Number(duct.elbows) > 0 && (
+                    <div style={{ background:"#FFFBEB", borderRadius:8, border:"1px solid #FDE68A", padding:12 }}>
+                      <p style={{ fontSize:11.5, fontWeight:700, color:"#92400E", fontFamily:"Inter,sans-serif", margin:"0 0 8px" }}>
+                        Elbow IL Lookup — {lined?"Lined":"Unlined"} · per 90° elbow (dB) · {Number(duct.elbows)} elbow{Number(duct.elbows)!==1?"s":""}
+                        <span style={{ fontWeight:500, color:"#B45309" }}> · highlighted row = current duct width</span>
+                      </p>
+                      <div style={{ overflowX:"auto" }}>
+                        <table style={{ borderCollapse:"collapse", minWidth:520 }}>
+                          <thead>
+                            <tr>
+                              <th style={{ padding:"5px 10px", textAlign:"left", fontSize:10.5, fontWeight:700, color:"#78350F", background:"#FDE68A", border:"1px solid #FCD34D", whiteSpace:"nowrap" }}>Width range</th>
+                              {BANDS.map(b=><th key={b} style={{ padding:"5px 8px", textAlign:"center", fontSize:10.5, fontWeight:700, color:"#78350F", background:"#FDE68A", border:"1px solid #FCD34D", minWidth:44 }}>{b} Hz</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {elbowTbl.map((row,r)=>(
+                              <tr key={r} style={{ background:r===ri?"#FEF3C7":"#fff" }}>
+                                <td style={{ padding:"5px 10px", fontSize:11.5, fontWeight:r===ri?700:400, color:"#78350F", border:"1px solid #FDE68A", whiteSpace:"nowrap" }}>{ELBOW_WIDTH_RANGES[r]}</td>
+                                {row.map((v,c)=><td key={c} style={{ padding:"5px 8px", textAlign:"center", fontSize:12, fontWeight:r===ri?700:400, color:r===ri?"#92400E":"#374151", border:"1px solid #FDE68A" }}>{v}</td>)}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ⑤ Live IL result preview */}
+                  {hasGeom && (
+                    <div style={{ background:"#F0FDF4", borderRadius:10, border:"1px solid #86EFAC", padding:14 }}>
+                      <p style={{ fontSize:12, fontWeight:700, color:"#15803D", fontFamily:"Plus Jakarta Sans,sans-serif", margin:"0 0 10px", display:"flex", alignItems:"center", gap:6 }}>
+                        <span style={{ fontSize:14 }}>📉</span> Live Duct IL — {lined?"Lined":"Unlined"} · results update instantly
+                      </p>
+
+                      {ductBandObj && (
+                        <div style={{ marginBottom:10 }}>
+                          <p style={{ fontSize:10.5, fontWeight:700, color:"#166534", fontFamily:"Inter,sans-serif", margin:"0 0 5px" }}>
+                            {lined?"Lined Duct IL (dB)":"Unlined Duct IL (dB)"}
+                          </p>
+                          <BandGrid values={ductBandObj} onChange={()=>{}} readOnly highlightColor="#16A34A"/>
+                        </div>
+                      )}
+
+                      {elbowBandObj && (
+                        <div style={{ marginBottom:10 }}>
+                          <p style={{ fontSize:10.5, fontWeight:700, color:"#166534", fontFamily:"Inter,sans-serif", margin:"0 0 5px" }}>
+                            Elbow IL — {Number(duct.elbows)} × 90° elbow{Number(duct.elbows)!==1?"s":""} (dB)
+                          </p>
+                          <BandGrid values={elbowBandObj} onChange={()=>{}} readOnly highlightColor="#16A34A"/>
+                        </div>
+                      )}
+
+                      {ductBandObj && elbowBandObj && totalBandObj && (
+                        <div style={{ borderTop:"1.5px solid #86EFAC", paddingTop:10, marginTop:2 }}>
+                          <p style={{ fontSize:10.5, fontWeight:700, color:"#15803D", fontFamily:"Inter,sans-serif", margin:"0 0 5px" }}>
+                            Total Duct IL — Duct + Elbows (dB)
+                          </p>
+                          <BandGrid values={totalBandObj} onChange={()=>{}} readOnly highlightColor="#047857"/>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* Add duct button */}
           <button type="button" onClick={addDuct}
@@ -751,27 +862,68 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </div>
       </Section>
 
-      {/* ── 4. Attenuator ── */}
-      <Section icon={Gauge} title="Attenuator / Acoustic Louver" color="#F59E0B" defaultOpen={false}>
+      {/* ── 3. End Reflection Factor ── */}
+      <Section icon={Waves} title="End Reflection Factor" color="#06B6D4" defaultOpen={false}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          <div style={g3}>
-            <TextInput label="Model" value={form.attenuator.model} onChange={v=>setA("model",v)} placeholder="e.g. A37" />
-            <NumInput  label="Width"  value={form.attenuator.width_mm}  onChange={v=>setA("width_mm",v)}  unit="mm" step={100} />
-            <NumInput  label="Height" value={form.attenuator.height_mm} onChange={v=>setA("height_mm",v)} unit="mm" step={100} />
+          <div style={{ background:"#ECFEFF", borderRadius:10, padding:"12px 14px", border:"1px solid #A5F3FC", fontSize:12.5, color:"#0E7490", fontFamily:"Inter,sans-serif" }}>
+            <strong>ERL</strong> = 10·log₁₀[ 1 + (a₁·c₀ / π·f·D)² ] − 1 &nbsp;&nbsp;
+            where D = √(4·Area/π) in ft, a₁ = 0.7, c₀ = 1125.33 ft/s
           </div>
           <div style={g2}>
-            <NumInput label="Length"        value={form.attenuator.length_mm}      onChange={v=>setA("length_mm",v)}        unit="mm" step={100} />
-            <NumInput label="Pressure Drop" value={form.attenuator.pressureDrop_pa} onChange={v=>setA("pressureDrop_pa",v)} unit="Pa" step={5} />
+            <NumInput label="Duct Width"  value={form.erl.width_mm}  onChange={v=>setErl("width_mm",v)}  onLiveChange={v=>setErl("width_mm",v)}  unit="mm" step={10} />
+            <NumInput label="Duct Height" value={form.erl.height_mm} onChange={v=>setErl("height_mm",v)} onLiveChange={v=>setErl("height_mm",v)} unit="mm" step={10} />
           </div>
-          <div style={{ background:"#FFFBEB", borderRadius:10, padding:"14px", border:"1px solid #FDE68A" }}>
-            <BandGrid
-              label="Attenuator Insertion Loss per Octave Band"
-              values={form.attenuator.il}
-              onChange={setAW}
-              note="Enter positive values — e.g. 12 means 12 dB attenuation at that frequency."
-              highlightColor="#D97706"
-            />
+          {(() => {
+            const erlVals = calcERL(form.erl.width_mm, form.erl.height_mm);
+            if (!erlVals) return (
+              <div style={{ fontSize:12.5, color:"#64748B", fontFamily:"Inter,sans-serif", padding:"8px 0" }}>
+                Enter duct width and height to see End Reflection Loss per octave band.
+              </div>
+            );
+            const erlObj = Object.fromEntries(BAND_KEYS.map((k,i)=>[k, erlVals[i]]));
+            return (
+              <div style={{ background:"#ECFEFF", borderRadius:10, padding:"14px", border:"1px solid #A5F3FC" }}>
+                <BandGrid
+                  label="End Reflection Loss (dB)"
+                  values={erlObj}
+                  onChange={()=>{}}
+                  readOnly
+                  highlightColor="#0891B2"
+                />
+              </div>
+            );
+          })()}
+        </div>
+      </Section>
+
+      {/* ── 4. Plant Room / Space Room ── */}
+      <Section icon={Box} title="Plant Room / Space Room" color="#3B82F6" defaultOpen={false}>
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={g4}>
+            <NumInput label="Length"          value={form.room.length_m}   onChange={v=>setRm("length_m",v)}   onLiveChange={v=>setRm("length_m",v)}   unit="m" step={0.5} />
+            <NumInput label="Width"           value={form.room.width_m}    onChange={v=>setRm("width_m",v)}    onLiveChange={v=>setRm("width_m",v)}    unit="m" step={0.5} />
+            <NumInput label="Ceiling Height"  value={form.room.height_m}   onChange={v=>setRm("height_m",v)}   onLiveChange={v=>setRm("height_m",v)}   unit="m" step={0.5} />
+            <NumInput label="Distance to Receiver" value={form.room.distance_m} onChange={v=>setRm("distance_m",v)} onLiveChange={v=>setRm("distance_m",v)} unit="m" step={0.5} min={0.5} />
           </div>
+          <div style={{ background:"#EFF6FF", borderRadius:10, padding:"10px 14px", border:"1px solid #BFDBFE", display:"flex", alignItems:"flex-start", gap:8, fontSize:12.5, color:"#1D4ED8", fontFamily:"Inter,sans-serif" }}>
+            <Info size={15} style={{ marginTop:1, flexShrink:0 }} />
+            <span>Schultz Room Equation: L<sub>p</sub> = L<sub>w</sub> − 10·log(r) − 5·log(V) − 3·log(f) + 12 &nbsp;·&nbsp; Volume = {round1((form.room.length_m||0)*(form.room.width_m||0)*(form.room.height_m||0))} m³</span>
+          </div>
+          {schultzBandObj ? (
+            <div style={{ background:"#EFF6FF", borderRadius:10, padding:"14px", border:"1px solid #BFDBFE" }}>
+              <BandGrid
+                label="Live Schultz Offset per Octave Band (dB)"
+                values={schultzBandObj}
+                onChange={()=>{}}
+                readOnly
+                highlightColor="#3B82F6"
+              />
+            </div>
+          ) : (
+            <div style={{ fontSize:12.5, color:"#64748B", fontFamily:"Inter,sans-serif", padding:"8px 0" }}>
+              Enter room dimensions and distance to see live Schultz correction per octave band.
+            </div>
+          )}
         </div>
       </Section>
 
@@ -813,6 +965,30 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
                 <NumInput label="Required NR" value={form.receiver.requiredNR} onChange={v=>setRc("requiredNR",v)} step={5} unit="NR" />
               </div>
             )}
+          </div>
+        </div>
+      </Section>
+
+      {/* ── 6. Attenuator ── */}
+      <Section icon={Gauge} title="Attenuator / Acoustic Louver" color="#F59E0B" defaultOpen={false}>
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={g3}>
+            <TextInput label="Model" value={form.attenuator.model} onChange={v=>setA("model",v)} placeholder="e.g. A37" />
+            <NumInput  label="Width"  value={form.attenuator.width_mm}  onChange={v=>setA("width_mm",v)}  unit="mm" step={100} />
+            <NumInput  label="Height" value={form.attenuator.height_mm} onChange={v=>setA("height_mm",v)} unit="mm" step={100} />
+          </div>
+          <div style={g2}>
+            <NumInput label="Length"        value={form.attenuator.length_mm}      onChange={v=>setA("length_mm",v)}        unit="mm" step={100} />
+            <NumInput label="Pressure Drop" value={form.attenuator.pressureDrop_pa} onChange={v=>setA("pressureDrop_pa",v)} unit="Pa" step={5} />
+          </div>
+          <div style={{ background:"#FFFBEB", borderRadius:10, padding:"14px", border:"1px solid #FDE68A" }}>
+            <BandGrid
+              label="Attenuator Insertion Loss per Octave Band"
+              values={form.attenuator.il}
+              onChange={setAW}
+              note="Enter positive values — e.g. 12 means 12 dB attenuation at that frequency."
+              highlightColor="#D97706"
+            />
           </div>
         </div>
       </Section>
