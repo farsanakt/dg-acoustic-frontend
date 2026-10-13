@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Zap, Box, Wind, Gauge, MapPin, Waves,
+  Zap, Box, Wind, Gauge, MapPin, Waves, Navigation,
   ChevronDown, ChevronUp, Loader2, Calculator,
   Info, Plus, Trash2,
 } from "lucide-react";
@@ -154,7 +154,7 @@ function calcLinedIL(width_mm, height_mm, length_m, thickness_in, coeffAOverride
       : LINED_DEFAULT.A[i];
     const C = LINED_DEFAULT.B[i];
     const D = LINED_DEFAULT.C[i];
-    const il = B * Math.pow(PS, C) * Math.pow(t, D) * L;
+    const il = -1 * B * Math.pow(PS, C) * Math.pow(t, D) * L;
     return Math.round(il * 100) / 100;
   });
 }
@@ -196,12 +196,23 @@ function calcERL(width_mm, height_mm) {
   const H = mmToFt(height_mm||0);
   if (W <= 0 || H <= 0) return null;
   const area = W * H;
-  const D = Math.sqrt(4 * area / Math.PI);
+  const D = Math.sqrt(4 * area);
   return BANDS.map(f => {
     const inner = (ERL_A1 * ERL_CO) / (Math.PI * f * D);
     const erl = 10 * Math.log10(1 + Math.pow(inner, ERL_A2)) - 1;
     return Math.round(erl * 100) / 100;
   });
+}
+
+// ── Distance Effect ───────────────────────────────────────────
+// IL = 10 · log(Q / 4πr²)
+function calcDistanceEffect(distance_m, directivity) {
+  const r = Number(distance_m) || 1;
+  const Q = Number(directivity) || 1;
+  if (r <= 0) return null;
+  const il = 10 * Math.log10(Q / (4 * Math.PI * r * r));
+  const val = Math.round(il * 100) / 100;
+  return Object.fromEntries(BAND_KEYS.map(k => [k, val]));
 }
 
 const defaultDuct = (idx = 0) => ({
@@ -228,8 +239,9 @@ const DEFAULT = {
   room:       { length_m:0, width_m:0, height_m:0, distance_m:3 },
   ducts:      [defaultDuct(0)],
   erl:        { width_mm:0, height_mm:0 },
-  attenuator: { model:"", width_mm:0, height_mm:0, length_mm:0, pressureDrop_pa:0, il:{ ...EMPTY_BAND } },
-  receiver:   { description:"", distance_m:3, directivity:2, requiredNC:65, requiredNR:65, required_dba:65, ncNrChoice:"NC" },
+  attenuator:     { model:"", width_mm:0, height_mm:0, length_mm:0, pressureDrop_pa:0, il:{ ...EMPTY_BAND } },
+  receiver:       { description:"", distance_m:3, directivity:2, requiredNC:65, requiredNR:65, required_dba:65, ncNrChoice:"NC" },
+  distanceEffect: { distance_m:3, directivity:1 },
 };
 
 /* ─── Live Schultz preview ──────────────────────────────────── */
@@ -483,8 +495,9 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         room:       { ...DEFAULT.room, distance_m:3, ...existing.room },
         ducts,
         erl:        { ...DEFAULT.erl, ...existing.erl },
-        attenuator: { ...DEFAULT.attenuator, ...existing.attenuator },
-        receiver:   { ...DEFAULT.receiver,   ...existing.receiver   },
+        attenuator:     { ...DEFAULT.attenuator,     ...existing.attenuator     },
+        receiver:       { ...DEFAULT.receiver,       ...existing.receiver       },
+        distanceEffect: { ...DEFAULT.distanceEffect, ...existing.distanceEffect },
       };
     }
     return { ...DEFAULT };
@@ -508,6 +521,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
   const setRm  = (k,v) => setForm(f=>({...f, room:{...f.room,[k]:v}}));
   const setErl = (k,v) => setForm(f=>({...f, erl:{...f.erl,[k]:v}}));
   const setA   = (k,v) => setForm(f=>({...f, attenuator:{...f.attenuator,[k]:v}}));
+  const setDE  = (k,v) => setForm(f=>({...f, distanceEffect:{...f.distanceEffect,[k]:v}}));
   const setAW = useCallback(v=>setForm(f=>({...f, attenuator:{...f.attenuator, il:v}})),[]);
   const setRc = (k,v) => setForm(f=>({...f, receiver:{...f.receiver,[k]:v}}));
 
@@ -755,16 +769,24 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
 
                       {/* Default coefficient tables */}
                       {[
-                        ["Coeff A (B) — Manufacturer value", LINED_DEFAULT.A],
-                        ["Coeff B (C) — Constant",           LINED_DEFAULT.B],
-                        ["Coeff C (D) — Constant",           LINED_DEFAULT.C],
-                      ].map(([lbl, vals]) => (
+                        ["Coeff A (B) — Manufacturer value", BAND_KEYS.map((k,i) => {
+                          const ov = duct.coeffA?.[k];
+                          return (ov !== undefined && ov !== 0 && ov !== "") ? Number(ov) : LINED_DEFAULT.A[i];
+                        }), true],
+                        ["Coeff B (C) — Constant",           LINED_DEFAULT.B, false],
+                        ["Coeff C (D) — Constant",           LINED_DEFAULT.C, false],
+                      ].map(([lbl, vals, isCoeffA]) => (
                         <div key={lbl}>
                           <p style={{ fontSize:10.5, fontWeight:700, color:"#6D28D9", fontFamily:"Inter,sans-serif", margin:"0 0 5px" }}>{lbl}</p>
                           <div style={{ overflowX:"auto" }}>
                             <table style={{ borderCollapse:"collapse", minWidth:480 }}>
                               <thead><tr>{BANDS.map(b=><th key={b} style={{ padding:"3px 8px", textAlign:"center", fontSize:10.5, fontWeight:700, color:"#7C3AED", background:"#EDE9FE", border:"1px solid #DDD6FE", minWidth:56 }}>{b} Hz</th>)}</tr></thead>
-                              <tbody><tr>{vals.map((v,i)=><td key={i} style={{ padding:"4px 6px", textAlign:"center", fontSize:11.5, fontWeight:600, color:"#4C1D95", border:"1px solid #DDD6FE", background:"#FAF8FF" }}>{v}</td>)}</tr></tbody>
+                              <tbody><tr>{vals.map((v,i)=>{
+                                const overridden = isCoeffA && duct.coeffA?.[BAND_KEYS[i]] !== undefined && duct.coeffA[BAND_KEYS[i]] !== 0 && duct.coeffA[BAND_KEYS[i]] !== "";
+                                return (
+                                  <td key={i} style={{ padding:"4px 6px", textAlign:"center", fontSize:11.5, fontWeight:600, color: overridden ? "#1D4ED8" : "#4C1D95", border:"1px solid #DDD6FE", background: overridden ? "#EFF6FF" : "#FAF8FF" }}>{v}</td>
+                                );
+                              })}</tr></tbody>
                             </table>
                           </div>
                         </div>
@@ -867,7 +889,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ background:"#ECFEFF", borderRadius:10, padding:"12px 14px", border:"1px solid #A5F3FC", fontSize:12.5, color:"#0E7490", fontFamily:"Inter,sans-serif" }}>
             <strong>ERL</strong> = 10·log₁₀[ 1 + (a₁·c₀ / π·f·D)² ] − 1 &nbsp;&nbsp;
-            where D = √(4·Area/π) in ft, a₁ = 0.7, c₀ = 1125.33 ft/s
+            where D = √(4·Area) in ft, a₁ = 0.7, c₀ = 1125.33 ft/s
           </div>
           <div style={g2}>
             <NumInput label="Duct Width"  value={form.erl.width_mm}  onChange={v=>setErl("width_mm",v)}  onLiveChange={v=>setErl("width_mm",v)}  unit="mm" step={10} />
@@ -966,10 +988,72 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
               </div>
             )}
           </div>
+
+          {/* Live distance IL preview */}
+          {(() => {
+            const deObj = calcDistanceEffect(form.receiver.distance_m, form.receiver.directivity);
+            if (!deObj) return null;
+            const singleVal = deObj[BAND_KEYS[0]];
+            return (
+              <div style={{ background:"#FEF2F2", borderRadius:10, padding:"14px", border:"1px solid #FECACA" }}>
+                <p style={{ fontSize:11.5, fontWeight:700, color:"#991B1B", fontFamily:"Inter,sans-serif", margin:"0 0 8px" }}>
+                  Distance Correction = {singleVal} dB &nbsp;
+                  <span style={{ fontWeight:400, color:"#B91C1C" }}>(frequency-independent)</span>
+                </p>
+                <BandGrid
+                  label="Distance Effect IL (dB)"
+                  values={deObj}
+                  onChange={()=>{}}
+                  readOnly
+                  highlightColor="#EF4444"
+                />
+              </div>
+            );
+          })()}
         </div>
       </Section>
 
-      {/* ── 6. Attenuator ── */}
+      {/* ── 6. Distance Effect ── */}
+      <Section icon={Navigation} title="Distance Effect" color="#10B981" defaultOpen={false}>
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={{ background:"#ECFDF5", borderRadius:10, padding:"12px 14px", border:"1px solid #A7F3D0", fontSize:12.5, color:"#065F46", fontFamily:"Inter,sans-serif" }}>
+            <strong>IL</strong> = 10·log₁₀(Q / 4πr²) &nbsp;&nbsp;
+            where Q = directivity factor, r = distance from source to receiver (m)
+          </div>
+          <div style={g2}>
+            <NumInput label="Distance to Receiver" value={form.distanceEffect.distance_m}  onChange={v=>setDE("distance_m",v)}  onLiveChange={v=>setDE("distance_m",v)}  unit="m" step={0.5} min={0.1} />
+            <SelectInput label="Directivity Q" value={form.distanceEffect.directivity} onChange={v=>setDE("directivity",parseFloat(v))}
+              options={[
+                {value:1, label:"Q=1 (free field / open space 4π)"},
+                {value:2, label:"Q=2 (half space 2π — near wall/ground)"},
+                {value:4, label:"Q=4 (quarter space — corner)"},
+                {value:8, label:"Q=8 (eighth space — tri-corner)"},
+              ]} />
+          </div>
+          {(() => {
+            const deObj = calcDistanceEffect(form.distanceEffect.distance_m, form.distanceEffect.directivity);
+            if (!deObj) return null;
+            const singleVal = deObj[BAND_KEYS[0]];
+            return (
+              <div style={{ background:"#ECFDF5", borderRadius:10, padding:"14px", border:"1px solid #A7F3D0" }}>
+                <p style={{ fontSize:11.5, fontWeight:700, color:"#065F46", fontFamily:"Inter,sans-serif", margin:"0 0 8px" }}>
+                  Distance Correction = {singleVal} dB &nbsp;
+                  <span style={{ fontWeight:400, color:"#047857" }}>(same value for all octave bands — frequency-independent)</span>
+                </p>
+                <BandGrid
+                  label="Distance Effect IL (dB)"
+                  values={deObj}
+                  onChange={()=>{}}
+                  readOnly
+                  highlightColor="#059669"
+                />
+              </div>
+            );
+          })()}
+        </div>
+      </Section>
+
+      {/* ── 7. Attenuator ── */}
       <Section icon={Gauge} title="Attenuator / Acoustic Louver" color="#F59E0B" defaultOpen={false}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={g3}>
