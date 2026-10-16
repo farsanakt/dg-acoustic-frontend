@@ -185,8 +185,8 @@ function combineDuctIL(ductIL, elbowIL) {
 }
 
 // ── End Reflection Loss ───────────────────────────────────────
-// ERL = 10·log₁₀[ 1 + (a1·co / π·f·D)^a2 ] − 1
-// a1=0.7, a2=2, co=1125.33 ft/s, D=√(4·Area) in ft
+// ERL = 10·log₁₀[ 1 + (a1·co / π·f·D)^a2 ] × −1
+// a1=0.7, a2=2, co=1125.33 ft/s, D=√(4·Area/π) in ft
 const ERL_A1 = 0.7;
 const ERL_A2 = 2;
 const ERL_CO = 1125.33; // ft/s
@@ -196,10 +196,10 @@ function calcERL(width_mm, height_mm) {
   const H = mmToFt(height_mm||0);
   if (W <= 0 || H <= 0) return null;
   const area = W * H;
-  const D = Math.sqrt(4 * area);
+  const D = Math.sqrt(4 * area / Math.PI); // D = √(4·Area/π) in ft
   return BANDS.map(f => {
     const inner = (ERL_A1 * ERL_CO) / (Math.PI * f * D);
-    const erl = 10 * Math.log10(1 + Math.pow(inner, ERL_A2)) - 1;
+    const erl = 10 * Math.log10(1 + Math.pow(inner, ERL_A2)) * -1; // multiply by -1
     return Math.round(erl * 100) / 100;
   });
 }
@@ -888,8 +888,8 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
       <Section icon={Waves} title="End Reflection Factor" color="#06B6D4" defaultOpen={false}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ background:"#ECFEFF", borderRadius:10, padding:"12px 14px", border:"1px solid #A5F3FC", fontSize:12.5, color:"#0E7490", fontFamily:"Inter,sans-serif" }}>
-            <strong>ERL</strong> = 10·log₁₀[ 1 + (a₁·c₀ / π·f·D)² ] − 1 &nbsp;&nbsp;
-            where D = √(4·Area) in ft, a₁ = 0.7, c₀ = 1125.33 ft/s
+            <strong>ERL</strong> = 10·log₁₀[ 1 + (a₁·c₀ / π·f·D)² ] × −1 &nbsp;&nbsp;
+            where D = √(4·Area/π) in ft, a₁ = 0.7, c₀ = 1125.33 ft/s
           </div>
           <div style={g2}>
             <NumInput label="Duct Width"  value={form.erl.width_mm}  onChange={v=>setErl("width_mm",v)}  onLiveChange={v=>setErl("width_mm",v)}  unit="mm" step={10} />
