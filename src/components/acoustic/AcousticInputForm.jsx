@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Zap, Box, Wind, Gauge, MapPin, Waves, Navigation,
   ChevronDown, ChevronUp, Loader2, Calculator,
-  Info, Plus, Trash2,
+  Info, Plus, Trash2, Layers,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { createCalculationApi, updateCalculationApi, runCalculationApi } from "@/api/calculationApi";
@@ -184,6 +184,66 @@ function combineDuctIL(ductIL, elbowIL) {
   });
 }
 
+// ── Radiated Noise Path — Transmission Loss ──────────────────
+// NC table from PDF: key = NC level (= STC), values = per-band dB at [63,125,250,500,1k,2k,4k,8k Hz]
+// Green column in PDF = NC/STC level; band values = yellow-highlighted rows
+const NC_TABLE = {
+  15:[47,36,29,22,17,14,12,11], 16:[47.8,36.8,29.8,22.8,18,15,13,12],
+  17:[49.08,38.08,31.08,24.08,19.6,16.6,14.6,14], 18:[50.23,39.23,32.23,25.23,21.04,18.04,16.04,15.04],
+  19:[50.85,39.85,32.85,25.85,21.81,18.81,16.81,16], 20:[51,40,33,26,22,19,17,16],
+  21:[51.6,40.8,33.8,27,23,20,17,16], 22:[52.56,42.08,35.08,28.6,21.6,19.6,18.6],
+  23:[53.42,43.23,36.23,30.04,26.04,23.04,21.04,20.04], 24:[53.88,43.85,36.85,30.81,26.81,23.81,21.81,21.91],
+  25:[54,44,37,31,27,24,22,21], 26:[54.6,44.8,37.8,31.8,28.25,25,23,23],
+  27:[55.56,46.08,39.08,33.08,29.08,26.08,24.12], 28:[56.42,47.23,40.23,34.23,30.23,27.23,25.22,25.22],
+  29:[56.88,47.85,40.85,34.85,30.85,28.81,26.81,26.77], 30:[57,48,41,35,31,29,27,27],
+  31:[57.6,48.8,41.8,36,32,30,28,28], 32:[58.56,50.08,43.08,37.6,33.6,31,29,28],
+  33:[59.42,51.23,44.23,39.04,34.04,32.04,31,31], 34:[59.88,51.85,44.85,39.81,35,33,32,31],
+  35:[60,52,45,40,36,34,33,32], 36:[60.8,52.8,46,41,37,35,34,33],
+  37:[62.08,54.08,47.6,42.6,38.6,36.6,35.6,34.6], 38:[63.23,55.23,49.04,44.04,40.04,39.04,38,37.04],
+  39:[63.85,55.85,49.81,44.81,40.81,41.81,38.81,37.91], 40:[64,56,50,45,41,41,39,38],
+  41:[64.6,56.8,50.8,45.8,42,42,40,39], 42:[65.56,58.08,52.08,47.08,43.6,42.8,41.6,40.6],
+  43:[66.42,59.23,53.23,48.23,44.63,43.81,42.81,42.14], 44:[66.88,59.85,53.85,48.85,45.81,45.01,43.81,42.91],
+  45:[67,60,54,49,46,46,44,43], 46:[67.8,60.8,54.8,50,47,46.2,45,44.1],
+  47:[69.08,62.08,56.08,51.6,48.6,47.48,47.48,45.7], 48:[70.23,63.23,57.23,53.04,50.04,49.24,48.04,47.14],
+  49:[70.85,63.85,57.85,53.81,50.61,50.01,48.84,47.91], 50:[71,64,58,54,51,50.2,49,48],
+  51:[71.6,64.6,58.8,54.8,51.8,51.8,50,49], 52:[72.56,65.56,60.08,56.08,53.6,52.88,51.6,50.7],
+  53:[73.42,66.42,61.23,57.23,55.04,54.24,53.04,52.14], 54:[73.88,66.88,61.85,57.85,55.81,55.01,53.84,52.91],
+  55:[74,67,62,58,56,55.2,54,53], 56:[74.6,67.8,63,59,57,56.2,55,54],
+  57:[75.56,69.08,64.6,60.6,57.6,57.6,56.6,55.6], 58:[76.42,70.23,66.04,62.04,59.04,59.04,57.04,57.14],
+  59:[76.88,70.85,66.81,62.81,59.81,60.01,58.81,57.91], 60:[77,71,67,63,60.01,60.21,59,58.1],
+  61:[77.6,71.8,67.8,64,62,61.21,60,59.1], 62:[78.56,73.08,69.6,66.6,63.4,63.4,61.4,60.5],
+  63:[79.42,74.23,71.04,68.04,65.04,65.04,63.04,62.14], 64:[79.88,74.85,71.81,68.81,65.81,65.81,64,63],
+  65:[80,75,72,69,66,66,65,63], 66:[81,76,72,69,67,67,66,64],
+  67:[81,77,73,70,68,68,66,65], 68:[82,77,73,71,69,69,67,66],
+  69:[82,78,74,72,70,70,68,67], 70:[83,79,75,73,71,71,69,68],
+  71:[84,80,76,74,72,72,70,69], 72:[84,81,77,75,73,73,71,70],
+  73:[85,81,77,75,74,74,72,71], 74:[85,82,78,76,75,74,73,72],
+  75:[86,83,79,77,76,76,74,73], 76:[87,84,80,79,77,75,74,73],
+  77:[87,85,81,80,78,78,75,74], 78:[88,85,81,80,79,79,76,75],
+  79:[88,86,82,81,79,80,77,76], 80:[89,87,83,83,81,79,78,77],
+};
+
+// Find closest NC value to given STC and return per-band TL (negative = loss)
+function stcToBandTL(stc) {
+  const ncLevels = Object.keys(NC_TABLE).map(Number);
+  const closest = ncLevels.reduce((prev, curr) =>
+    Math.abs(curr - stc) < Math.abs(prev - stc) ? curr : prev
+  );
+  return NC_TABLE[closest].map(v => -v);
+}
+
+function getNCForSTC(stc) {
+  const ncLevels = Object.keys(NC_TABLE).map(Number);
+  return ncLevels.reduce((prev, curr) =>
+    Math.abs(curr - stc) < Math.abs(prev - stc) ? curr : prev
+  );
+}
+
+// Through Ceiling (Above/Below) — Ground Floor Slab values
+const CEILING_TL = [-36, -37, -41, -45, -49, -53, -57, -61];
+// Through False Ceiling — Gypsum ceiling values
+const FALSE_CEILING_TL = [-18, -21, -25, -25, -27, -27, -28, -28];
+
 // ── End Reflection Loss ───────────────────────────────────────
 // ERL = 10·log₁₀[ 1 + (a1·co / π·f·D)^a2 ] × −1
 // a1=0.7, a2=2, co=1125.33 ft/s, D=√(4·Area/π) in ft
@@ -242,6 +302,14 @@ const DEFAULT = {
   attenuator:     { model:"", width_mm:0, height_mm:0, length_mm:0, pressureDrop_pa:0, il:{ ...EMPTY_BAND } },
   receiver:       { description:"", distance_m:3, directivity:2, requiredNC:65, requiredNR:65, required_dba:65, ncNrChoice:"NC" },
   distanceEffect: { distance_m:3, directivity:1 },
+  radiated: {
+    losses: [],   // array of active loss type ids: "wall","door","ceiling","falseCeiling"
+    wall:         { stc: 45 },
+    door:         { stc: 35 },
+    ceiling:      {},   // fixed values, no user input
+    falseCeiling: {},   // fixed values, no user input
+    spaceRoom:    { length_m:0, width_m:0, height_m:0, distance_m:3 },
+  },
 };
 
 /* ─── Live Schultz preview ──────────────────────────────────── */
@@ -498,6 +566,11 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         attenuator:     { ...DEFAULT.attenuator,     ...existing.attenuator     },
         receiver:       { ...DEFAULT.receiver,       ...existing.receiver       },
         distanceEffect: { ...DEFAULT.distanceEffect, ...existing.distanceEffect },
+        radiated:       { ...DEFAULT.radiated,       ...existing.radiated,
+          wall:         { ...DEFAULT.radiated.wall,         ...(existing.radiated?.wall         || {}) },
+          door:         { ...DEFAULT.radiated.door,         ...(existing.radiated?.door         || {}) },
+          spaceRoom:    { ...DEFAULT.radiated.spaceRoom,    ...(existing.radiated?.spaceRoom    || {}) },
+        },
       };
     }
     return { ...DEFAULT };
@@ -524,6 +597,14 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
   const setDE  = (k,v) => setForm(f=>({...f, distanceEffect:{...f.distanceEffect,[k]:v}}));
   const setAW = useCallback(v=>setForm(f=>({...f, attenuator:{...f.attenuator, il:v}})),[]);
   const setRc = (k,v) => setForm(f=>({...f, receiver:{...f.receiver,[k]:v}}));
+  const setRad = (k,v) => setForm(f=>({...f, radiated:{...f.radiated,[k]:v}}));
+  const setRadSub = (sub,k,v) => setForm(f=>({...f, radiated:{...f.radiated,[sub]:{...f.radiated[sub],[k]:v}}}));
+  const toggleRadLoss = (id) => setForm(f=>{
+    const losses = f.radiated.losses.includes(id)
+      ? f.radiated.losses.filter(x=>x!==id)
+      : [...f.radiated.losses, id];
+    return {...f, radiated:{...f.radiated, losses}};
+  });
 
   // Duct helpers
   const addDuct = () => setForm(f => ({ ...f, ducts:[...f.ducts, defaultDuct(f.ducts.length)] }));
@@ -676,8 +757,233 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </div>
       </Section>
 
-      {/* ── 2. Duct(s) ── */}
-      <Section icon={Wind} title={`Duct(s) / Opening`} color="#8B5CF6"
+      {/* ── RADIATED: Transmission Loss section ── */}
+      {form.noisePath === "radiated" && (() => {
+        const LOSS_OPTIONS = [
+          { id:"wall",         label:"Through Wall",                color:"#3B82F6" },
+          { id:"door",         label:"Through Door",                color:"#8B5CF6" },
+          { id:"ceiling",      label:"Through Ceiling (Above/Below)",color:"#0E9F8E" },
+          { id:"falseCeiling", label:"Through False Ceiling",        color:"#F59E0B" },
+        ];
+        const active = form.radiated.losses;
+
+        // compute combined TL (sum all active losses) per band
+        const tlMatrix = active.map(id => {
+          if (id === "wall")         return stcToBandTL(Number(form.radiated.wall.stc)||45);
+          if (id === "door")         return stcToBandTL(Number(form.radiated.door.stc)||35);
+          if (id === "ceiling")      return CEILING_TL;
+          if (id === "falseCeiling") return FALSE_CEILING_TL;
+          return BANDS.map(()=>0);
+        });
+        const combinedTL = BANDS.map((_,i) => tlMatrix.reduce((sum,row)=>sum+row[i], 0));
+        const combinedObj = Object.fromEntries(BAND_KEYS.map((k,i)=>[k, Math.round(combinedTL[i]*100)/100]));
+
+        return (
+          <Section icon={Layers} title="Transmission Loss (Radiated)" color="#EF4444">
+            <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+              {/* loss type toggles */}
+              <div>
+                <p style={{ fontSize:11, fontWeight:700, color:"#6B7280", textTransform:"uppercase", letterSpacing:".05em", margin:"0 0 8px", fontFamily:"Inter,sans-serif" }}>
+                  Select Loss Type(s) — choose one or more
+                </p>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {LOSS_OPTIONS.map(opt=>{
+                    const on = active.includes(opt.id);
+                    return (
+                      <button key={opt.id} type="button" onClick={()=>toggleRadLoss(opt.id)}
+                        style={{
+                          padding:"7px 14px", borderRadius:8, fontSize:13, fontWeight:600,
+                          cursor:"pointer", fontFamily:"Inter,sans-serif", transition:"all .15s",
+                          border:`1.5px solid ${on ? opt.color : "#E2E8F0"}`,
+                          background: on ? opt.color+"1A" : "#fff",
+                          color: on ? opt.color : "#64748B",
+                        }}>
+                        {on ? "✓ " : ""}{opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* per-type inputs */}
+              {active.includes("wall") && (() => {
+                const wallStc = Number(form.radiated.wall.stc)||45;
+                const wallNC  = getNCForSTC(wallStc);
+                const wallTL  = stcToBandTL(wallStc);
+                return (
+                  <div style={{ background:"#EFF6FF", borderRadius:10, padding:"14px 16px", border:"1px solid #BFDBFE" }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:12 }}>
+                      <p style={{ fontSize:12, fontWeight:700, color:"#1D4ED8", margin:0, fontFamily:"Inter,sans-serif" }}>Through Wall</p>
+                      <span style={{ fontSize:11, fontWeight:600, padding:"2px 10px", borderRadius:99, background:"#DBEAFE", color:"#1D4ED8", fontFamily:"Inter,sans-serif" }}>
+                        STC {wallStc} → NC {wallNC}
+                      </span>
+                    </div>
+                    <div style={{ maxWidth:200 }}>
+                      <NumInput label="Wall STC Rating" value={form.radiated.wall.stc}
+                        onChange={v=>setRadSub("wall","stc",v)} onLiveChange={v=>setRadSub("wall","stc",v)}
+                        unit="dB" step={1}/>
+                    </div>
+                    <div style={{ marginTop:12, background:"#fff", borderRadius:8, padding:"12px 14px", border:"1px solid #BFDBFE" }}>
+                      <p style={{ fontSize:11, fontWeight:700, color:"#1D4ED8", margin:"0 0 10px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                        Wall TL per Band (dB) — NC {wallNC} table
+                      </p>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
+                        {BANDS.map((b,i) => (
+                          <div key={b} style={{ textAlign:"center" }}>
+                            <div style={{ fontSize:10, fontWeight:600, color:"#64748B", marginBottom:4, fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
+                            <div style={{ background:"#1D4ED8", color:"#fff", borderRadius:6, padding:"6px 2px", fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
+                              {wallTL[i]}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {active.includes("door") && (() => {
+                const doorStc = Number(form.radiated.door.stc)||35;
+                const doorNC  = getNCForSTC(doorStc);
+                const doorTL  = stcToBandTL(doorStc);
+                return (
+                  <div style={{ background:"#F5F3FF", borderRadius:10, padding:"14px 16px", border:"1px solid #DDD6FE" }}>
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:12 }}>
+                      <p style={{ fontSize:12, fontWeight:700, color:"#6D28D9", margin:0, fontFamily:"Inter,sans-serif" }}>Through Door</p>
+                      <span style={{ fontSize:11, fontWeight:600, padding:"2px 10px", borderRadius:99, background:"#EDE9FE", color:"#6D28D9", fontFamily:"Inter,sans-serif" }}>
+                        STC {doorStc} → NC {doorNC}
+                      </span>
+                    </div>
+                    <div style={{ maxWidth:200 }}>
+                      <NumInput label="Door STC Rating" value={form.radiated.door.stc}
+                        onChange={v=>setRadSub("door","stc",v)} onLiveChange={v=>setRadSub("door","stc",v)}
+                        unit="dB" step={1}/>
+                    </div>
+                    <div style={{ marginTop:12, background:"#fff", borderRadius:8, padding:"12px 14px", border:"1px solid #DDD6FE" }}>
+                      <p style={{ fontSize:11, fontWeight:700, color:"#6D28D9", margin:"0 0 10px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                        Door TL per Band (dB) — NC {doorNC} table
+                      </p>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
+                        {BANDS.map((b,i) => (
+                          <div key={b} style={{ textAlign:"center" }}>
+                            <div style={{ fontSize:10, fontWeight:600, color:"#64748B", marginBottom:4, fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
+                            <div style={{ background:"#7C3AED", color:"#fff", borderRadius:6, padding:"6px 2px", fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
+                              {doorTL[i]}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {active.includes("ceiling") && (
+                <div style={{ background:"#ECFDF5", borderRadius:10, padding:"14px 16px", border:"1px solid #A7F3D0" }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:12 }}>
+                    <p style={{ fontSize:12, fontWeight:700, color:"#065F46", margin:0, fontFamily:"Inter,sans-serif" }}>Through Ceiling (Above / Below)</p>
+                    <span style={{ fontSize:11, fontWeight:600, padding:"2px 10px", borderRadius:99, background:"#D1FAE5", color:"#065F46", fontFamily:"Inter,sans-serif" }}>Ground Floor Slab — fixed</span>
+                  </div>
+                  <div style={{ background:"#fff", borderRadius:8, padding:"12px 14px", border:"1px solid #A7F3D0" }}>
+                    <p style={{ fontSize:11, fontWeight:700, color:"#065F46", margin:"0 0 10px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>Ceiling TL per Band (dB)</p>
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
+                      {BANDS.map((b,i) => (
+                        <div key={b} style={{ textAlign:"center" }}>
+                          <div style={{ fontSize:10, fontWeight:600, color:"#64748B", marginBottom:4, fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
+                          <div style={{ background:"#0E9F8E", color:"#fff", borderRadius:6, padding:"6px 2px", fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
+                            {CEILING_TL[i]}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {active.includes("falseCeiling") && (
+                <div style={{ background:"#FFFBEB", borderRadius:10, padding:"14px 16px", border:"1px solid #FDE68A" }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:12 }}>
+                    <p style={{ fontSize:12, fontWeight:700, color:"#92400E", margin:0, fontFamily:"Inter,sans-serif" }}>Through False Ceiling</p>
+                    <span style={{ fontSize:11, fontWeight:600, padding:"2px 10px", borderRadius:99, background:"#FEF3C7", color:"#92400E", fontFamily:"Inter,sans-serif" }}>Gypsum — ASHRAE 2015 — fixed</span>
+                  </div>
+                  <div style={{ background:"#fff", borderRadius:8, padding:"12px 14px", border:"1px solid #FDE68A" }}>
+                    <p style={{ fontSize:11, fontWeight:700, color:"#92400E", margin:"0 0 10px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>False Ceiling TL per Band (dB)</p>
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
+                      {BANDS.map((b,i) => (
+                        <div key={b} style={{ textAlign:"center" }}>
+                          <div style={{ fontSize:10, fontWeight:600, color:"#64748B", marginBottom:4, fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
+                          <div style={{ background:"#D97706", color:"#fff", borderRadius:6, padding:"6px 2px", fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
+                            {FALSE_CEILING_TL[i]}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* combined preview */}
+              {active.length > 1 && (
+                <div style={{ background:"#FEF2F2", borderRadius:10, padding:"14px 16px", border:"1px solid #FECACA" }}>
+                  <p style={{ fontSize:12, fontWeight:700, color:"#991B1B", margin:"0 0 12px", fontFamily:"Inter,sans-serif" }}>
+                    Combined Transmission Loss — {active.length} paths summed
+                  </p>
+                  <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
+                    {BANDS.map((b,i) => (
+                      <div key={b} style={{ textAlign:"center" }}>
+                        <div style={{ fontSize:10, fontWeight:600, color:"#64748B", marginBottom:4, fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
+                        <div style={{ background:"#DC2626", color:"#fff", borderRadius:6, padding:"6px 2px", fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
+                          {Math.round(combinedTL[i]*10)/10}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </Section>
+        );
+      })()}
+
+      {/* ── RADIATED: Space Room Effect ── */}
+      {form.noisePath === "radiated" && (() => {
+        const sr = form.radiated.spaceRoom;
+        const schultz = liveSchultzOffsets(sr.length_m, sr.width_m, sr.height_m, sr.distance_m);
+        const schultzObj = schultz ? Object.fromEntries(BAND_KEYS.map((k,i)=>[k,Math.round(schultz[i]*100)/100])) : null;
+        const V = Number(sr.length_m)*Number(sr.width_m)*Number(sr.height_m);
+        return (
+          <Section icon={Box} title="Space / Room Effect (Radiated)" color="#3B82F6">
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              {schultz && (
+                <div style={{ background:"#EFF6FF", borderRadius:10, padding:"11px 14px", border:"1px solid #BFDBFE", fontSize:12.5, color:"#1D4ED8", fontFamily:"Inter,sans-serif" }}>
+                  <Info size={13} style={{ verticalAlign:"middle", marginRight:5 }}/>
+                  Schultz Room Equation: L<sub>p</sub> = L<sub>w</sub> − 10·log(r) − 5·log(V) − 3·log(f) + 12
+                  {V>0 && <> &nbsp;·&nbsp; Volume = {Math.round(V)} m³</>}
+                </div>
+              )}
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+                <NumInput label="Length" value={sr.length_m} onChange={v=>setRadSub("spaceRoom","length_m",v)} onLiveChange={v=>setRadSub("spaceRoom","length_m",v)} unit="m" step={0.5}/>
+                <NumInput label="Width"  value={sr.width_m}  onChange={v=>setRadSub("spaceRoom","width_m",v)}  onLiveChange={v=>setRadSub("spaceRoom","width_m",v)}  unit="m" step={0.5}/>
+                <NumInput label="Ceiling Height" value={sr.height_m} onChange={v=>setRadSub("spaceRoom","height_m",v)} onLiveChange={v=>setRadSub("spaceRoom","height_m",v)} unit="m" step={0.5}/>
+                <NumInput label="Distance to Receiver" value={sr.distance_m} onChange={v=>setRadSub("spaceRoom","distance_m",v)} onLiveChange={v=>setRadSub("spaceRoom","distance_m",v)} unit="m" step={0.5}/>
+              </div>
+              {schultzObj && (
+                <div style={{ background:"#F0FDF4", borderRadius:10, padding:"12px 14px", border:"1px solid #BBF7D0" }}>
+                  <BandGrid label="Live Schultz Offset per Octave Band (dB)" values={schultzObj} onChange={()=>{}} readOnly highlightColor="#3B82F6"/>
+                </div>
+              )}
+              {!schultz && (
+                <p style={{ fontSize:12, color:"#9CA3AF", fontStyle:"italic", fontFamily:"Inter,sans-serif" }}>Enter room dimensions to see live Schultz attenuation.</p>
+              )}
+            </div>
+          </Section>
+        );
+      })()}
+
+      {/* ── 2. Duct(s) — hidden for radiated path ── */}
+      {form.noisePath !== "radiated" && <Section icon={Wind} title={`Duct(s) / Opening`} color="#8B5CF6"
         badge={`${form.ducts.length} duct${form.ducts.length!==1?"s":""}`}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
 
@@ -882,10 +1188,10 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             <Plus size={15}/> Add Another Duct
           </button>
         </div>
-      </Section>
+      </Section>}
 
-      {/* ── 3. End Reflection Factor ── */}
-      <Section icon={Waves} title="End Reflection Factor" color="#06B6D4" defaultOpen={false}>
+      {/* ── 3. End Reflection Factor — hidden for radiated path ── */}
+      {form.noisePath !== "radiated" && <Section icon={Waves} title="End Reflection Factor" color="#06B6D4" defaultOpen={false}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ background:"#ECFEFF", borderRadius:10, padding:"12px 14px", border:"1px solid #A5F3FC", fontSize:12.5, color:"#0E7490", fontFamily:"Inter,sans-serif" }}>
             <strong>ERL</strong> = 10·log₁₀[ 1 + (a₁·c₀ / π·f·D)² ] × −1 &nbsp;&nbsp;
@@ -916,10 +1222,10 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             );
           })()}
         </div>
-      </Section>
+      </Section>}
 
-      {/* ── 4. Plant Room / Space Room ── */}
-      <Section icon={Box} title="Plant Room / Space Room" color="#3B82F6" defaultOpen={false}>
+      {/* ── 4. Plant Room / Space Room — hidden for radiated path ── */}
+      {form.noisePath !== "radiated" && <Section icon={Box} title="Plant Room / Space Room" color="#3B82F6" defaultOpen={false}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={g4}>
             <NumInput label="Length"          value={form.room.length_m}   onChange={v=>setRm("length_m",v)}   onLiveChange={v=>setRm("length_m",v)}   unit="m" step={0.5} />
@@ -947,7 +1253,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             </div>
           )}
         </div>
-      </Section>
+      </Section>}
 
       {/* ── 5. Receiver ── */}
       <Section icon={MapPin} title="Receiver Location" color="#EF4444">
@@ -1013,8 +1319,8 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </div>
       </Section>
 
-      {/* ── 6. Distance Effect ── */}
-      <Section icon={Navigation} title="Distance Effect" color="#10B981" defaultOpen={false}>
+      {/* ── 6. Distance Effect — hidden for radiated path ── */}
+      {form.noisePath !== "radiated" && <Section icon={Navigation} title="Distance Effect" color="#10B981" defaultOpen={false}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ background:"#ECFDF5", borderRadius:10, padding:"12px 14px", border:"1px solid #A7F3D0", fontSize:12.5, color:"#065F46", fontFamily:"Inter,sans-serif" }}>
             <strong>IL</strong> = 10·log₁₀(Q / 4πr²) &nbsp;&nbsp;
@@ -1051,7 +1357,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             );
           })()}
         </div>
-      </Section>
+      </Section>}
 
       {/* ── 7. Attenuator ── */}
       <Section icon={Gauge} title="Attenuator / Acoustic Louver" color="#F59E0B" defaultOpen={false}>
