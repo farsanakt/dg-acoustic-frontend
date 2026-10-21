@@ -185,181 +185,111 @@ function combineDuctIL(ductIL, elbowIL) {
 // ── Radiated Noise Path — Transmission Loss ──────────────────
 // NC table from PDF: key = NC level (= STC), values = per-band dB at [63,125,250,500,1k,2k,4k,8k Hz]
 // Green column in PDF = NC/STC level; band values = yellow-highlighted rows
-// NC_TABLE: exact values from AAPL NC document (NC level → [63,125,250,500,1000,2000,4000,8000 Hz] dB)
-// Source: NC_80_db__dbA_values.pdf — left columns (NC Level + 8 octave bands)
-const NC_TABLE = {
-  15:[47,36,29,22,17,14,12,11],
-  16:[47.8,36.8,29.8,22.8,18,15,13,12],
-  17:[49.08,38.08,31.08,24.08,19.6,16.6,14.6,13.6],
-  18:[50.23,39.23,32.23,25.23,21.04,18.04,16.04,15.04],
-  19:[50.85,39.85,32.85,25.85,21.81,18.81,16.81,15.81],
-  20:[51,40,33,26,22,19,17,16],
-  21:[51.6,40.8,33.8,27,23,20,18,17],
-  22:[52.56,42.08,35.08,28.6,24.6,21.6,19.6,18.6],
-  23:[53.42,43.23,36.23,30.04,26.04,23.04,21.04,20.04],
-  24:[53.88,43.85,36.85,30.81,26.81,23.81,21.81,20.81],
-  25:[54,44,37,31,27,24,22,21],
-  26:[54.6,44.8,37.8,31.8,27.8,25,23.2,22.2],
-  27:[55.56,46.08,39.08,33.08,29.08,26.6,25.12,24.12],
-  28:[56.42,47.23,40.23,34.23,30.23,28.04,26.85,25.85],
-  29:[56.88,47.85,40.85,34.85,30.85,28.81,27.77,26.77],
-  30:[57,48,41,35,31,29,28,27],
-  31:[57.6,48.8,41.8,36,32,30,29,28],
-  32:[58.56,50.08,43.08,37.6,33.6,31.6,30.6,29.6],
-  33:[59.42,51.23,44.23,39.04,35.04,33.04,32.04,31.04],
-  34:[59.88,51.85,44.85,39.81,35.81,33.81,32.81,31.81],
-  35:[60,52,45,40,36,34,33,32],
-  36:[60.8,52.8,46,41,37,35,34,33],
-  37:[62.08,54.08,47.6,42.6,38.6,36.6,35.6,34.6],
-  38:[63.23,55.23,49.04,44.04,40.04,38.04,37.04,36.04],
-  39:[63.85,55.85,49.81,44.81,40.81,38.81,37.81,36.81],
-  40:[64,56,50,45,41,39,38,37],
-  41:[64.6,56.8,50.8,45.8,42,40,39,38],
-  42:[65.56,58.08,52.08,47.08,43.6,41.6,40.6,39.6],
-  43:[66.42,59.23,53.23,48.23,45.04,43.04,42.04,41.04],
-  44:[66.88,59.85,53.85,48.85,45.81,43.81,42.81,41.81],
-  45:[67,60,54,49,46,44,43,42],
-  46:[67.8,60.8,54.8,50,47,45,44,43],
-  47:[69.08,62.08,56.08,51.6,48.6,46.6,45.6,44.6],
-  48:[70.23,63.23,57.23,53.04,50.04,48.04,47.04,46.04],
-  49:[70.85,63.85,57.85,53.81,50.81,48.81,47.81,46.81],
-  50:[71,64,58,54,51,49,48,47],
-  51:[71.6,64.6,58.8,54.8,52,50,49,48],
-  52:[72.56,65.56,60.08,56.08,53.6,51.6,50.6,49.6],
-  53:[73.42,66.42,61.23,57.23,55.04,53.04,52.04,51.04],
-  54:[73.88,66.88,61.85,57.85,55.81,53.81,52.81,51.81],
-  55:[74,67,62,58,56,54,53,52],
-  56:[74.6,67.8,63,59,57,55,54,53],
-  57:[75.56,69.08,64.6,60.6,58.6,56.6,55.6,54.6],
-  58:[76.42,70.23,66.04,62.04,60.04,58.04,57.04,56.04],
-  59:[76.88,70.85,66.81,62.81,60.81,58.81,57.81,56.81],
-  60:[77,71,67,63,61,59,58,57],
-  61:[77.6,71.8,67.8,64,62,60,59,58],
-  62:[78.56,73.08,69.08,65.6,63.6,61.6,60.6,59.6],
-  63:[79.42,74.23,70.23,67.04,65.04,63.04,62.04,61.04],
-  64:[79.88,74.85,70.85,67.81,65.81,63.81,62.81,61.81],
-  65:[80,75,71,68,66,64,63,62],
-  66:[81,76,72,69,67,65,64,63],
-  67:[81,77,73,70,68,66,65,64],
-  68:[82,77,73,71,69,67,66,65],
-  69:[82,78,74,72,70,68,67,66],
-  70:[83,79,75,73,71,69,68,67],
-  71:[84,80,76,74,72,70,69,68],
-  72:[84,81,77,75,73,71,70,69],
-  73:[85,81,77,76,74,72,71,70],
-  74:[85,82,78,77,75,73,72,71],
-  75:[86,83,79,78,76,74,73,72],
-  76:[87,84,80,79,77,75,74,73],
-  77:[87,85,81,80,78,76,75,74],
-  78:[88,85,81,81,79,77,76,75],
-  79:[88,86,82,82,80,78,77,76],
-  80:[89,87,83,83,81,79,78,77],
-};
+// ── NC TABLE — exact values extracted from NC_80_db__dbA_values.pdf ──────────────
+// Each row: { nc, left[8], dba[8], dbaTotal }
+// nc       = NC level (integer, 15–80)
+// left[8]  = LEFT table: per-band dB values [63,125,250,500,1000,2000,4000,8000 Hz] — Receiver Location
+// dba[8]   = RIGHT table: per-band dB(A) yellow values [63,125,250,500,1000,2000,4000,8000 Hz] — Transmission Loss
+// dbaTotal = RIGHT table: rightmost "dba" column — this is the GREEN number the user sees/enters
+const NC_ROWS = [
+  { nc:15, left:[47.0,36.0,29.0,22.0,17.0,14.0,12.0,11.0],   dba:[20.8,19.9,20.4,18.8,17.0,15.2,13.0,12.1],   dbaTotal:27.18 },
+  { nc:16, left:[47.8,36.8,29.8,22.8,18.0,15.0,13.0,12.0],   dba:[21.6,20.7,21.2,19.6,18.0,16.2,14.0,13.1],   dbaTotal:28.03 },
+  { nc:17, left:[49.08,38.08,31.08,24.08,19.6,16.6,14.6,13.6],dba:[22.88,21.98,22.48,20.88,19.6,17.8,15.6,14.7],dbaTotal:29.39 },
+  { nc:18, left:[50.23,39.23,32.23,25.23,21.04,18.04,16.04,15.04],dba:[24.03,23.13,23.63,22.03,21.04,19.24,17.04,16.14],dbaTotal:30.61 },
+  { nc:19, left:[50.85,39.85,32.85,25.85,21.81,18.81,16.81,15.81],dba:[24.65,23.75,24.25,22.65,21.81,20.01,17.81,16.91],dbaTotal:31.27 },
+  { nc:20, left:[51.0,40.0,33.0,26.0,22.0,19.0,17.0,16.0],   dba:[24.8,23.9,24.4,22.8,22.0,20.2,18.0,17.1],   dbaTotal:31.43 },
+  { nc:21, left:[51.6,40.8,33.8,27.0,23.0,20.0,18.0,17.0],   dba:[25.4,24.7,25.2,23.8,23.0,21.2,19.0,18.1],   dbaTotal:32.27 },
+  { nc:22, left:[52.56,42.08,35.08,28.6,24.6,21.6,19.6,18.6],dba:[26.36,25.98,26.48,25.4,24.6,22.8,20.6,19.7], dbaTotal:33.63 },
+  { nc:23, left:[53.42,43.23,36.23,30.04,26.04,23.04,21.04,20.04],dba:[27.22,27.13,27.63,26.84,26.04,24.24,22.04,21.14],dbaTotal:34.86 },
+  { nc:24, left:[53.88,43.85,36.85,30.81,26.81,23.81,21.81,20.81],dba:[27.68,27.75,28.25,27.61,26.81,25.01,22.81,21.91],dbaTotal:35.53 },
+  { nc:25, left:[54.0,44.0,37.0,31.0,27.0,24.0,22.0,21.0],   dba:[27.8,27.9,28.4,27.8,27.0,25.2,23.0,22.1],   dbaTotal:35.69 },
+  { nc:26, left:[54.6,44.8,37.8,31.8,27.8,25.0,23.2,22.2],   dba:[28.4,28.7,29.2,28.6,27.8,26.2,24.2,23.3],   dbaTotal:36.52 },
+  { nc:27, left:[55.56,46.08,39.08,33.08,29.08,26.6,25.12,24.12],dba:[29.36,29.98,30.48,29.88,29.08,27.8,26.12,25.22],dbaTotal:37.85 },
+  { nc:28, left:[56.42,47.23,40.23,34.23,30.23,28.04,26.85,25.85],dba:[30.22,31.13,31.63,31.03,30.23,29.24,27.85,26.95],dbaTotal:39.07 },
+  { nc:29, left:[56.88,47.85,40.85,34.85,30.85,28.81,27.77,26.77],dba:[30.68,31.75,32.25,31.65,30.85,30.01,28.77,27.87],dbaTotal:39.73 },
+  { nc:30, left:[57.0,48.0,41.0,35.0,31.0,29.0,28.0,27.0],   dba:[30.8,31.9,32.4,31.8,31.0,30.2,29.0,28.1],   dbaTotal:39.89 },
+  { nc:31, left:[57.6,48.8,41.8,36.0,32.0,30.0,29.0,28.0],   dba:[31.4,32.7,33.2,32.8,32.0,31.2,30.0,29.1],   dbaTotal:40.77 },
+  { nc:32, left:[58.56,50.08,43.08,37.6,33.6,31.6,30.6,29.6],dba:[32.36,33.98,34.48,34.4,33.6,32.8,31.6,30.7], dbaTotal:42.20 },
+  { nc:33, left:[59.42,51.23,44.23,39.04,35.04,33.04,32.04,31.04],dba:[33.22,35.13,35.63,35.84,35.04,34.24,33.04,32.14],dbaTotal:43.49 },
+  { nc:34, left:[59.88,51.85,44.85,39.81,35.81,33.81,32.81,31.81],dba:[33.68,35.75,36.25,36.61,35.81,35.01,33.81,32.91],dbaTotal:44.19 },
+  { nc:35, left:[60.0,52.0,45.0,40.0,36.0,34.0,33.0,32.0],   dba:[33.8,35.9,36.4,36.8,36.0,35.2,34.0,33.1],   dbaTotal:44.36 },
+  { nc:36, left:[60.8,52.8,46.0,41.0,37.0,35.0,34.0,33.0],   dba:[34.6,36.7,37.4,37.8,37.0,36.2,35.0,34.1],   dbaTotal:45.31 },
+  { nc:37, left:[62.08,54.08,47.6,42.6,38.6,36.6,35.6,34.6], dba:[35.88,37.98,39.0,39.4,38.6,37.8,36.6,35.7],  dbaTotal:46.85 },
+  { nc:38, left:[63.23,55.23,49.04,44.04,40.04,38.04,37.04,36.04],dba:[37.03,39.13,40.44,40.84,40.04,39.24,38.04,37.14],dbaTotal:48.23 },
+  { nc:39, left:[63.85,55.85,49.81,44.81,40.81,38.81,37.81,36.81],dba:[37.65,39.75,41.21,41.61,40.81,40.01,38.81,37.91],dbaTotal:48.96 },
+  { nc:40, left:[64.0,56.0,50.0,45.0,41.0,39.0,38.0,37.0],   dba:[37.8,39.9,41.4,41.8,41.0,40.2,39.0,38.1],   dbaTotal:49.15 },
+  { nc:41, left:[64.6,56.8,50.8,45.8,42.0,40.0,39.0,38.0],   dba:[38.4,40.7,42.2,42.6,42.0,41.2,40.0,39.1],   dbaTotal:50.03 },
+  { nc:42, left:[65.56,58.08,52.08,47.08,43.6,41.6,40.6,39.6],dba:[39.36,41.98,43.48,43.88,43.6,42.8,41.6,40.7],dbaTotal:51.44 },
+  { nc:43, left:[66.42,59.23,53.23,48.23,45.04,43.04,42.04,41.04],dba:[40.22,43.13,44.63,45.03,45.04,44.24,43.04,42.14],dbaTotal:52.72 },
+  { nc:44, left:[66.88,59.85,53.85,48.85,45.81,43.81,42.81,41.81],dba:[40.68,43.75,45.25,45.65,45.81,45.01,43.81,42.91],dbaTotal:53.40 },
+  { nc:45, left:[67.0,60.0,54.0,49.0,46.0,44.0,43.0,42.0],   dba:[40.8,43.9,45.4,45.8,46.0,45.2,44.0,43.1],   dbaTotal:53.57 },
+  { nc:46, left:[67.8,60.8,54.8,50.0,47.0,45.0,44.0,43.0],   dba:[41.6,44.7,46.2,46.8,47.0,46.2,45.0,44.1],   dbaTotal:54.51 },
+  { nc:47, left:[69.08,62.08,56.08,51.6,48.6,46.6,45.6,44.6],dba:[42.88,45.98,47.48,48.4,48.6,47.8,46.6,45.7], dbaTotal:56.02 },
+  { nc:48, left:[70.23,63.23,57.23,53.04,50.04,48.04,47.04,46.04],dba:[44.03,47.13,48.63,49.84,50.04,49.24,48.04,47.14],dbaTotal:57.38 },
+  { nc:49, left:[70.85,63.85,57.85,53.81,50.81,48.81,47.81,46.81],dba:[44.65,47.75,49.25,50.61,50.81,50.01,48.81,47.91],dbaTotal:58.10 },
+  { nc:50, left:[71.0,64.0,58.0,54.0,51.0,49.0,48.0,47.0],   dba:[44.8,47.9,49.4,50.8,51.0,50.2,49.0,48.1],   dbaTotal:58.29 },
+  { nc:51, left:[71.6,64.6,58.8,54.8,52.0,50.0,49.0,48.0],   dba:[45.4,48.5,50.2,51.6,52.0,51.2,50.0,49.1],   dbaTotal:59.17 },
+  { nc:52, left:[72.56,65.56,60.08,56.08,53.6,51.6,50.6,49.6],dba:[46.36,49.46,51.48,52.88,53.6,52.8,51.6,50.7],dbaTotal:60.60 },
+  { nc:53, left:[73.42,66.42,61.23,57.23,55.04,53.04,52.04,51.04],dba:[47.22,50.32,52.63,54.03,55.04,54.24,53.04,52.14],dbaTotal:61.89 },
+  { nc:54, left:[73.88,66.88,61.85,57.85,55.81,53.81,52.81,51.81],dba:[47.68,50.78,53.25,54.65,55.81,55.01,53.81,52.91],dbaTotal:62.59 },
+  { nc:55, left:[74.0,67.0,62.0,58.0,56.0,54.0,53.0,52.0],   dba:[47.8,50.9,53.4,54.8,56.0,55.2,54.0,53.1],   dbaTotal:62.76 },
+  { nc:56, left:[74.6,67.8,63.0,59.0,57.0,55.0,54.0,53.0],   dba:[48.4,51.7,54.4,55.8,57.0,56.2,55.0,54.1],   dbaTotal:63.74 },
+  { nc:57, left:[75.56,69.08,64.6,60.6,58.6,56.6,55.6,54.6], dba:[49.36,52.98,56.0,57.4,58.6,57.8,56.6,55.7],  dbaTotal:65.30 },
+  { nc:58, left:[76.42,70.23,66.04,62.04,60.04,58.04,57.04,56.04],dba:[50.22,54.13,57.44,58.84,60.04,59.24,58.04,57.14],dbaTotal:66.71 },
+  { nc:59, left:[76.88,70.85,66.81,62.81,60.81,58.81,57.81,56.81],dba:[50.68,54.75,58.21,59.61,60.81,60.01,58.81,57.91],dbaTotal:67.46 },
+  { nc:60, left:[77.0,71.0,67.0,63.0,61.0,59.0,58.0,57.0],   dba:[50.8,54.9,58.4,59.8,61.0,60.2,59.0,58.1],   dbaTotal:67.65 },
+  { nc:61, left:[77.6,71.8,67.8,64.0,62.0,60.0,59.0,58.0],   dba:[51.4,55.7,59.2,60.8,62.0,61.2,60.0,59.1],   dbaTotal:68.61 },
+  { nc:62, left:[78.56,73.08,69.08,65.6,63.6,61.6,60.6,59.6],dba:[52.36,56.98,60.48,62.4,63.6,62.8,61.6,60.7], dbaTotal:70.15 },
+  { nc:63, left:[79.42,74.23,70.23,67.04,65.04,63.04,62.04,61.04],dba:[53.22,58.13,61.63,63.84,65.04,64.24,63.04,62.14],dbaTotal:71.53 },
+  { nc:64, left:[79.88,74.85,70.85,67.81,65.81,63.81,62.81,61.81],dba:[53.68,58.75,62.25,64.61,65.81,65.01,63.81,62.91],dbaTotal:72.27 },
+  { nc:65, left:[80.0,75.0,71.0,68.0,66.0,64.0,63.0,62.0],   dba:[53.8,58.9,62.4,64.8,66.0,65.2,64.0,63.1],   dbaTotal:72.46 },
+  { nc:66, left:[81.0,76.0,72.0,69.0,67.0,65.0,64.0,63.0],   dba:[54.8,59.9,63.4,65.8,67.0,66.2,65.0,64.1],   dbaTotal:73.46 },
+  { nc:67, left:[81.0,77.0,73.0,70.0,68.0,66.0,65.0,64.0],   dba:[54.8,60.9,64.4,66.8,68.0,67.2,66.0,65.1],   dbaTotal:74.45 },
+  { nc:68, left:[82.0,77.0,73.0,71.0,69.0,67.0,66.0,65.0],   dba:[55.8,60.9,64.4,67.8,69.0,68.2,67.0,66.1],   dbaTotal:75.32 },
+  { nc:69, left:[82.0,78.0,74.0,72.0,70.0,68.0,67.0,66.0],   dba:[55.8,61.9,65.4,68.8,70.0,69.2,68.0,67.1],   dbaTotal:76.31 },
+  { nc:70, left:[83.0,79.0,75.0,73.0,71.0,69.0,68.0,67.0],   dba:[56.8,62.9,66.4,69.8,71.0,70.2,69.0,68.1],   dbaTotal:77.31 },
+  { nc:71, left:[84.0,80.0,76.0,74.0,72.0,70.0,69.0,68.0],   dba:[57.8,63.9,67.4,70.8,72.0,71.2,70.0,69.1],   dbaTotal:78.31 },
+  { nc:72, left:[84.0,81.0,77.0,75.0,73.0,71.0,70.0,69.0],   dba:[57.8,64.9,68.4,71.8,73.0,72.2,71.0,70.1],   dbaTotal:79.30 },
+  { nc:73, left:[85.0,81.0,77.0,76.0,74.0,72.0,71.0,70.0],   dba:[58.8,64.9,68.4,72.8,74.0,73.2,72.0,71.1],   dbaTotal:80.19 },
+  { nc:74, left:[85.0,82.0,78.0,77.0,75.0,73.0,72.0,71.0],   dba:[58.8,65.9,69.4,73.8,75.0,74.2,73.0,72.1],   dbaTotal:81.19 },
+  { nc:75, left:[86.0,83.0,79.0,78.0,76.0,74.0,73.0,72.0],   dba:[59.8,66.9,70.4,74.8,76.0,75.2,74.0,73.1],   dbaTotal:82.19 },
+  { nc:76, left:[87.0,84.0,80.0,79.0,77.0,75.0,74.0,73.0],   dba:[60.8,67.9,71.4,75.8,77.0,76.2,75.0,74.1],   dbaTotal:83.19 },
+  { nc:77, left:[87.0,85.0,81.0,80.0,78.0,76.0,75.0,74.0],   dba:[60.8,68.9,72.4,76.8,78.0,77.2,76.0,75.1],   dbaTotal:84.18 },
+  { nc:78, left:[88.0,85.0,81.0,81.0,79.0,77.0,76.0,75.0],   dba:[61.8,68.9,72.4,77.8,79.0,78.2,77.0,76.1],   dbaTotal:85.10 },
+  { nc:79, left:[88.0,86.0,82.0,82.0,80.0,78.0,77.0,76.0],   dba:[61.8,69.9,73.4,78.8,80.0,79.2,78.0,77.1],   dbaTotal:86.09 },
+  { nc:80, left:[89.0,87.0,83.0,83.0,81.0,79.0,78.0,77.0],   dba:[62.8,70.9,74.4,79.8,81.0,80.2,79.0,78.1],   dbaTotal:87.09 },
+];
 
-// NC_TABLE_DBA: yellow-highlighted dB(A)-weighted per-band values from the same PDF (right columns)
-// key = NC level, values = [63,125,250,500,1000,2000,4000,8000 Hz] in dB(A)
-const NC_TABLE_DBA = {
-  15:[20.8,19.9,20.4,18.8,17.0,15.2,13.0,12.1],
-  16:[21.6,20.7,21.2,19.6,18.0,16.2,14.0,13.1],
-  17:[22.88,21.98,22.48,20.88,19.6,17.8,15.6,14.7],
-  18:[24.03,23.13,23.63,22.03,21.04,19.24,17.04,16.14],
-  19:[24.65,23.75,24.25,22.65,21.81,20.01,17.81,16.91],
-  20:[24.8,23.9,24.4,22.8,22.0,20.2,18.0,17.1],
-  21:[25.4,24.7,25.2,23.8,23.0,21.2,19.0,18.1],
-  22:[26.36,25.98,26.48,25.4,24.6,22.8,20.6,19.7],
-  23:[27.22,27.13,27.63,26.84,26.04,24.24,22.04,21.14],
-  24:[27.68,27.75,28.25,27.61,26.81,25.01,22.81,21.91],
-  25:[27.8,27.9,28.4,27.8,27.0,25.2,23.0,22.1],
-  26:[28.4,28.7,29.2,28.6,27.8,26.2,24.2,23.3],
-  27:[29.36,29.98,30.48,29.88,29.08,27.8,26.12,25.22],
-  28:[30.22,31.13,31.63,31.03,30.23,29.24,27.85,26.95],
-  29:[30.68,31.75,32.25,31.65,30.85,30.01,28.77,27.87],
-  30:[30.8,31.9,32.4,31.8,31.0,30.2,29.0,28.1],
-  31:[31.4,32.7,33.2,32.8,32.0,31.2,30.0,29.1],
-  32:[32.36,33.98,34.48,34.4,33.6,32.8,31.6,30.7],
-  33:[33.22,35.13,35.63,35.84,35.04,34.24,33.04,32.14],
-  34:[33.68,35.75,36.25,36.61,35.81,35.01,33.81,32.91],
-  35:[33.8,35.9,36.4,36.8,36.0,35.2,34.0,33.1],
-  36:[34.6,36.7,37.4,37.8,37.0,36.2,35.0,34.1],
-  37:[35.88,37.98,39.0,39.4,38.6,37.8,36.6,35.7],
-  38:[37.03,39.13,40.44,40.84,40.04,39.24,38.04,37.14],
-  39:[37.65,39.75,41.21,41.61,40.81,40.01,38.81,37.91],
-  40:[37.8,39.9,41.4,41.8,41.0,40.2,39.0,38.1],
-  41:[38.4,40.7,42.2,42.6,42.0,41.2,40.0,39.1],
-  42:[39.36,41.98,43.48,43.88,43.6,42.8,41.6,40.7],
-  43:[40.22,43.13,44.63,45.03,45.04,44.24,43.04,42.14],
-  44:[40.68,43.75,45.25,45.65,45.81,45.01,43.81,42.91],
-  45:[40.8,43.9,45.4,45.8,46.0,45.2,44.0,43.1],
-  46:[41.6,44.7,46.2,46.8,47.0,46.2,45.0,44.1],
-  47:[42.88,45.98,47.48,48.4,48.6,47.8,46.6,45.7],
-  48:[44.03,47.13,48.63,49.84,50.04,49.24,48.04,47.14],
-  49:[44.65,47.75,49.25,50.61,50.81,50.01,48.81,47.91],
-  50:[44.8,47.9,49.4,50.8,51.0,50.2,49.0,48.1],
-  51:[45.4,48.5,50.2,51.6,52.0,51.2,50.0,49.1],
-  52:[46.36,49.46,51.48,52.88,53.6,52.8,51.6,50.7],
-  53:[47.22,50.32,52.63,54.03,55.04,54.24,53.04,52.14],
-  54:[47.68,50.78,53.25,54.65,55.81,55.01,53.81,52.91],
-  55:[47.8,50.9,53.4,54.8,56.0,55.2,54.0,53.1],
-  56:[48.4,51.7,54.4,55.8,57.0,56.2,55.0,54.1],
-  57:[49.36,52.98,56.0,57.4,58.6,57.8,56.6,55.7],
-  58:[50.22,54.13,57.44,58.84,60.04,59.24,58.04,57.14],
-  59:[50.68,54.75,58.21,59.61,60.81,60.01,58.81,57.91],
-  60:[50.8,54.9,58.4,59.8,61.0,60.2,59.0,58.1],
-  61:[51.4,55.7,59.2,60.8,62.0,61.2,60.0,59.1],
-  62:[52.36,56.98,60.48,62.4,63.6,62.8,61.6,60.7],
-  63:[53.22,58.13,61.63,63.84,65.04,64.24,63.04,62.14],
-  64:[53.68,58.75,62.25,64.61,65.81,65.01,63.81,62.91],
-  65:[53.8,58.9,62.4,64.8,66.0,65.2,64.0,63.1],
-  66:[54.8,59.9,63.4,65.8,67.0,66.2,65.0,64.1],
-  67:[54.8,60.9,64.4,66.8,68.0,67.2,66.0,65.1],
-  68:[55.8,60.9,64.4,67.8,69.0,68.2,67.0,66.1],
-  69:[55.8,61.9,65.4,68.8,70.0,69.2,68.0,67.1],
-  70:[56.8,62.9,66.4,69.8,71.0,70.2,69.0,68.1],
-  71:[57.8,63.9,67.4,70.8,72.0,71.2,70.0,69.1],
-  72:[57.8,64.9,68.4,71.8,73.0,72.2,71.0,70.1],
-  73:[58.8,64.9,68.4,72.8,74.0,73.2,72.0,71.1],
-  74:[58.8,65.9,69.4,73.8,75.0,74.2,73.0,72.1],
-  75:[59.8,66.9,70.4,74.8,76.0,75.2,74.0,73.1],
-  76:[60.8,67.9,71.4,75.8,77.0,76.2,75.0,74.1],
-  77:[60.8,68.9,72.4,76.8,78.0,77.2,76.0,75.1],
-  78:[61.8,68.9,72.4,77.8,79.0,78.2,77.0,76.1],
-  79:[61.8,69.9,73.4,78.8,80.0,79.2,78.0,77.1],
-  80:[62.8,70.9,74.4,79.8,81.0,80.2,79.0,78.1],
-};
-
-// Get dB(A) per-band values for a given STC (maps to nearest NC in NC_TABLE_DBA)
-function stcToDbaPerBand(stc) {
-  const ncLevels = Object.keys(NC_TABLE_DBA).map(Number);
-  const closest = ncLevels.reduce((prev, curr) =>
-    Math.abs(curr - stc) < Math.abs(prev - stc) ? curr : prev
+// ── Lookup helpers ────────────────────────────────────────────────────────────
+// Find nearest NC_ROW by STC value.
+// The STC column in the PDF = floor(dbaTotal).  e.g. NC18 dbaTotal=30.61 → STC 30.
+// So we find the row whose floor(dbaTotal) is nearest to the integer STC the user types.
+// When tied, prefer the lower NC (earliest in array).
+function findRowByDbaTotal(stcInput) {
+  const v = Math.round(Number(stcInput) || 0);
+  return NC_ROWS.reduce((best, row) => {
+    const bDiff = Math.abs(Math.floor(best.dbaTotal) - v);
+    const rDiff = Math.abs(Math.floor(row.dbaTotal) - v);
+    return rDiff < bDiff ? row : best;
+  });
+}
+// Find nearest NC_ROW by NC level (integer key) — for the left (NC) table
+function findRowByNC(nc) {
+  const v = Number(nc) || 15;
+  return NC_ROWS.reduce((best, row) =>
+    Math.abs(row.nc - v) < Math.abs(best.nc - v) ? row : best
   );
-  return NC_TABLE_DBA[closest];
 }
 
-// Transmission Loss per band: uses NC_TABLE_DBA (right-side dB(A) yellow values from document)
-// Returns negative values (attenuation) for use in Lp chain
-function stcToBandTL(stc) {
-  const ncLevels = Object.keys(NC_TABLE_DBA).map(Number);
-  const closest = ncLevels.reduce((prev, curr) =>
-    Math.abs(curr - stc) < Math.abs(prev - stc) ? curr : prev
-  );
-  return NC_TABLE_DBA[closest].map(v => -v);
-}
+// Keep legacy names used elsewhere in this file
+// NC_TABLE / NC_TABLE_DBA — still needed for getNCCriteria fallback; build from NC_ROWS
+const NC_TABLE     = Object.fromEntries(NC_ROWS.map(r => [r.nc, r.left]));
+const NC_TABLE_DBA = Object.fromEntries(NC_ROWS.map(r => [r.nc, r.dba]));
 
-// NC curve band values (left-side dB) — used for Receiver Location NC comparison
-function ncCurveBands(stc) {
-  const ncLevels = Object.keys(NC_TABLE).map(Number);
-  const closest = ncLevels.reduce((prev, curr) =>
-    Math.abs(curr - stc) < Math.abs(prev - stc) ? curr : prev
-  );
-  return NC_TABLE[closest];
-}
-
-function getNCForSTC(stc) {
-  const ncLevels = Object.keys(NC_TABLE).map(Number);
-  return ncLevels.reduce((prev, curr) =>
-    Math.abs(curr - stc) < Math.abs(prev - stc) ? curr : prev
-  );
+function stcToDbaPerBand(val) { return findRowByDbaTotal(val).dba; }
+function stcToBandTL(val)     { return findRowByDbaTotal(val).dba.map(v => -v); }
+function ncCurveBands(val)    { return findRowByDbaTotal(val).left; }
+function getNCForSTC(val)     { return findRowByDbaTotal(val).nc;
 }
 
 // NC Criteria table (right side of PDF) — per-band SPL limit for each NC level
@@ -494,16 +424,22 @@ function calcLiveReceiverLp(form) {
   // 5. Attenuator IL
   const attArr = BAND_KEYS.map(k => Number(form.attenuator.il?.[k])||0);
 
-  // 6. Through-path TL (wall/door/ceiling — applied as negative IL, from NC_TABLE lookup)
+  // 6. Through-path TL (wall/door/ceiling)
+  //    STC/dbaTotal (green column, right table) → look up by dbaTotal → apply dB(A) values as negative attenuation
+  function stcToTL(stcInput, fallback) {
+    const val = Number(stcInput) || fallback;
+    const row = findRowByDbaTotal(val);
+    return row.dba.map(v => -v);
+  }
   let throughTL = BAND_KEYS.map(()=>0);
   if (form.noisePath === "through_wall") {
-    throughTL = stcToBandTL(Number(form.throughPath?.wall_stc)||45);
+    throughTL = stcToTL(form.throughPath?.wall_stc, 45);
   } else if (form.noisePath === "through_door") {
-    throughTL = stcToBandTL(Number(form.throughPath?.door_stc)||35);
+    throughTL = stcToTL(form.throughPath?.door_stc, 35);
   } else if (form.noisePath === "through_ceiling_above" || form.noisePath === "through_ceiling_below") {
-    {
-      throughTL = stcToBandTL(Number(form.throughPath?.ceiling_stc)||45);
-    }
+    // Ceiling: user enters manual per-band TL values (negative = attenuation)
+    const cb = form.throughPath?.ceiling_bands || {};
+    throughTL = BAND_KEYS.map(k => -(Number(cb[k]) || 0));
   }
 
   // 7. Combine
@@ -606,11 +542,12 @@ const DEFAULT = {
   // Through-wall / door / ceiling path TL inputs (stored to backend)
   throughPath: {
     wall_label:    "",   // free-text: e.g. "230mm Brick Wall"
-    wall_stc:      45,
+    wall_stc:      45,   // STC (green column, right table) → Transmission Loss bands
     door_label:    "",   // free-text: e.g. "Solid Core Timber Door"
     door_stc:      35,
     ceiling_label: "",   // free-text: e.g. "150mm Concrete Slab"
-    ceiling_stc:   45,
+    ceiling_stc:   45,   // STC rating (stored to backend / report)
+    ceiling_bands: { ...EMPTY_BAND },  // manual per-band TL dB — user types each value
   },
 };
 
@@ -1072,16 +1009,17 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
 
         // Keys for this path
         const labelKey  = isWall ? "wall_label"    : isDoor ? "door_label"    : "ceiling_label";
-        const stcKey    = isWall ? "wall_stc"       : isDoor ? "door_stc"       : "ceiling_stc";
+        const stcKey    = isWall ? "wall_stc"       : isDoor ? "door_stc"       : null;
         const typeLabel = isWall ? "Wall Type"      : isDoor ? "Door Type"      : "Ceiling Type";
-        const stcLabel  = isWall ? "Wall STC Rating": isDoor ? "Door STC Rating": "Ceiling STC Rating";
 
-        // Band values: left = NC curve dB (receiver location), right = dB(A) yellow = TL applied
-        const stcVal   = Number(form.throughPath?.[stcKey]) || (isWall ? 45 : isDoor ? 35 : 45);
-        const ncBands  = ncCurveBands(stcVal);         // left-column NC curve (dB) — receiver location
-        const dbaArr   = stcToDbaPerBand(stcVal);      // right-column dB(A) yellow — Transmission Loss
-        const tlArr    = stcToBandTL(stcVal);          // same as dbaArr but negative (for Lp chain)
-        const nc       = getNCForSTC(stcVal);
+        // Wall/Door: STC value (right table, green dbaTotal column) → Transmission Loss bands
+        const stcVal   = stcKey ? (Number(form.throughPath?.[stcKey]) || (isWall ? 45 : 35)) : null;
+        const stcRow   = stcVal != null ? findRowByDbaTotal(stcVal) : null;
+        const stcNC    = stcRow ? stcRow.nc : null;
+        const dbaArr   = stcRow ? stcRow.dba : null;
+
+        // Ceiling: manual per-band TL values
+        const ceilingBands = form.throughPath?.ceiling_bands || { ...EMPTY_BAND };
 
         return (
           <Section icon={Layers} title={`Transmission Loss — ${sectionLabel}`} color={color}>
@@ -1111,75 +1049,85 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
                 </p>
               </div>
 
-              {/* STC input + NC badge */}
-              <div style={{ display:"flex", alignItems:"flex-end", gap:16, flexWrap:"wrap" }}>
-                <div style={{ maxWidth:220 }}>
-                  <NumInput
-                    label={stcLabel}
-                    value={stcVal}
-                    onChange={v=>setTP(stcKey,v)}
-                    onLiveChange={v=>setTP(stcKey,v)}
-                    unit="dB" step={1}
-                  />
-                </div>
-                <span style={{ fontSize:12, fontWeight:700, padding:"5px 13px", borderRadius:99,
-                  background:chipBg, color:textColor, fontFamily:"Inter,sans-serif", marginBottom:2 }}>
-                  STC {stcVal} → NC {nc}
-                </span>
-              </div>
-
-              {/* Live per-band table — NC curve dB + dB(A) from document */}
-              <div style={{ background:bgLight, borderRadius:10, padding:"14px 16px", border:`1px solid ${border}` }}>
-                <p style={{ fontSize:11, fontWeight:700, color:textColor, margin:"0 0 12px",
-                  fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
-                  NC {nc} Band Values (STC {stcVal})
-                </p>
-
-                {/* Header row */}
-                <div style={{ display:"grid", gridTemplateColumns:"110px repeat(8,1fr)", gap:5, marginBottom:6 }}>
-                  <div/>
-                  {BANDS.map(b => (
-                    <div key={b} style={{ textAlign:"center", fontSize:10, fontWeight:700,
-                      color:"#64748B", fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
-                  ))}
-                </div>
-
-                {/* Row 1: NC curve dB — used for Receiver Location comparison */}
-                <div style={{ display:"grid", gridTemplateColumns:"110px repeat(8,1fr)", gap:5, marginBottom:6 }}>
-                  <div style={{ display:"flex", flexDirection:"column", justifyContent:"center" }}>
-                    <span style={{ fontSize:11, fontWeight:700, color:textColor, fontFamily:"Inter,sans-serif" }}>dB</span>
-                    <span style={{ fontSize:9.5, color:"#64748B", fontFamily:"Inter,sans-serif", marginTop:1 }}>Receiver Location</span>
-                  </div>
-                  {BANDS.map((b,i) => (
-                    <div key={b} style={{ textAlign:"center" }}>
-                      <div style={{ background:color, color:"#fff", borderRadius:6, padding:"6px 2px",
-                        fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
-                        {ncBands ? ncBands[i] : "—"}
-                      </div>
+              {/* Wall / Door: STC input + auto band lookup */}
+              {!isDoor && !isWall ? null : (
+                <>
+                  <div style={{ display:"flex", alignItems:"flex-end", gap:12, flexWrap:"wrap" }}>
+                    <div style={{ maxWidth:220 }}>
+                      <NumInput
+                        label="STC / dB(A) Total"
+                        value={stcVal}
+                        onChange={v=>setTP(stcKey,v)}
+                        onLiveChange={v=>setTP(stcKey,v)}
+                        unit="" step={1}
+                      />
                     </div>
-                  ))}
-                </div>
-
-                {/* Row 2: dB(A) yellow values — used as Transmission Loss */}
-                <div style={{ display:"grid", gridTemplateColumns:"110px repeat(8,1fr)", gap:5 }}>
-                  <div style={{ display:"flex", flexDirection:"column", justifyContent:"center" }}>
-                    <span style={{ fontSize:11, fontWeight:700, color:"#B45309", fontFamily:"Inter,sans-serif" }}>dB(A)</span>
-                    <span style={{ fontSize:9.5, color:"#64748B", fontFamily:"Inter,sans-serif", marginTop:1 }}>Transmission Loss</span>
+                    <span style={{ fontSize:12, fontWeight:700, padding:"5px 13px", borderRadius:99,
+                      background:"#FEF9C3", color:"#92400E", fontFamily:"Inter,sans-serif",
+                      marginBottom:2, border:"1px solid #FDE68A" }}>
+                      → NC {stcNC}
+                    </span>
                   </div>
-                  {BANDS.map((b,i) => (
-                    <div key={b} style={{ textAlign:"center" }}>
-                      <div style={{ background:"#FEF9C3", color:"#92400E", borderRadius:6, padding:"6px 2px",
-                        fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif", border:"1px solid #FDE68A" }}>
-                        {dbaArr ? dbaArr[i] : "—"}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                  <p style={{ fontSize:11, color:"#94A3B8", margin:"-8px 0 0", fontFamily:"Inter,sans-serif" }}>
+                    Enter the dB(A) total (green column, right table) — band values are looked up automatically.
+                  </p>
 
-                <p style={{ fontSize:11, color:"#94A3B8", margin:"10px 0 0", fontFamily:"Inter,sans-serif" }}>
-                  dB = NC curve (left column) for receiver comparison. dB(A) = yellow column from document, applied as TL in Lp chain.
-                </p>
-              </div>
+                  {/* Per-band dB(A) yellow values — Transmission Loss */}
+                  <div style={{ background:bgLight, borderRadius:10, padding:"14px 16px", border:`1px solid ${border}` }}>
+                    <p style={{ fontSize:11, fontWeight:700, color:textColor, margin:"0 0 12px",
+                      fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                      dB(A) Transmission Loss — NC {stcNC}
+                    </p>
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:5 }}>
+                      {BANDS.map((b,i) => (
+                        <div key={b} style={{ textAlign:"center" }}>
+                          <div style={{ fontSize:10, fontWeight:700, color:"#64748B",
+                            fontFamily:"Inter,sans-serif", marginBottom:4 }}>{b} Hz</div>
+                          <div style={{ background:"#FEF9C3", color:"#92400E", borderRadius:6, padding:"7px 2px",
+                            fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif", border:"1px solid #FDE68A" }}>
+                            {dbaArr ? dbaArr[i] : "—"}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Ceiling: STC input + manual per-band TL input */}
+              {(form.noisePath === "through_ceiling_above" || form.noisePath === "through_ceiling_below") && (
+                <>
+                  {/* STC input */}
+                  <div style={{ display:"flex", alignItems:"flex-end", gap:12, flexWrap:"wrap" }}>
+                    <div style={{ maxWidth:220 }}>
+                      <NumInput
+                        label="STC Rating"
+                        value={Number(form.throughPath?.ceiling_stc) || 45}
+                        onChange={v=>setTP("ceiling_stc",v)}
+                        onLiveChange={v=>setTP("ceiling_stc",v)}
+                        unit="" step={1}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Manual per-band TL */}
+                  <div style={{ background:bgLight, borderRadius:10, padding:"14px 16px", border:`1px solid ${border}` }}>
+                    <p style={{ fontSize:11, fontWeight:700, color:textColor, margin:"0 0 4px",
+                      fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                      Transmission Loss — Enter dB per band
+                    </p>
+                    <p style={{ fontSize:11, color:"#94A3B8", margin:"0 0 12px", fontFamily:"Inter,sans-serif" }}>
+                      Type the TL value for each octave band manually.
+                    </p>
+                    <BandGrid
+                      values={ceilingBands}
+                      onChange={v => setForm(f => ({ ...f, throughPath:{ ...f.throughPath, ceiling_bands:v } }))}
+                      onLiveChange={v => setForm(f => ({ ...f, throughPath:{ ...f.throughPath, ceiling_bands:v } }))}
+                      highlightColor={color}
+                    />
+                  </div>
+                </>
+              )}
 
             </div>
           </Section>
