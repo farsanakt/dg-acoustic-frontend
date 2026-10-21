@@ -60,13 +60,11 @@ function ConversionPreviewTable({ noiseInputType, rawBand, distance_m, resultBan
   }[noiseInputType];
   const rows = [{ label: entryLabel, values: BAND_KEYS.map(k => rawBand?.[k] ?? 0) }];
   if (noiseInputType === "swl_dba") {
-    rows.push({ label:"A-Weighting Correction", values: BAND_KEYS.map(k => A_WEIGHTING[k]) });
     rows.push({ label:"Resulting SWL (dB)", values: BAND_KEYS.map(k => resultBand?.[k] ?? 0), highlight:true });
   } else if (noiseInputType === "spl_db") {
     rows.push({ label:`+10·log₁₀(4πr²)  @ r=${r}m`, values: BAND_KEYS.map(() => distanceTerm) });
     rows.push({ label:"Resulting SWL (dB)", values: BAND_KEYS.map(k => resultBand?.[k] ?? 0), highlight:true });
   } else if (noiseInputType === "spl_dba") {
-    rows.push({ label:"A-Weighting Correction", values: BAND_KEYS.map(k => A_WEIGHTING[k]) });
     rows.push({ label:"SPL (dB) after A-Weighting", values: BAND_KEYS.map(k => round1((rawBand?.[k]??0) - A_WEIGHTING[k])) });
     rows.push({ label:`+10·log₁₀(4πr²)  @ r=${r}m`, values: BAND_KEYS.map(() => distanceTerm) });
     rows.push({ label:"Resulting SWL (dB)", values: BAND_KEYS.map(k => resultBand?.[k] ?? 0), highlight:true });
@@ -187,49 +185,174 @@ function combineDuctIL(ductIL, elbowIL) {
 // ── Radiated Noise Path — Transmission Loss ──────────────────
 // NC table from PDF: key = NC level (= STC), values = per-band dB at [63,125,250,500,1k,2k,4k,8k Hz]
 // Green column in PDF = NC/STC level; band values = yellow-highlighted rows
+// NC_TABLE: exact values from AAPL NC document (NC level → [63,125,250,500,1000,2000,4000,8000 Hz] dB)
+// Source: NC_80_db__dbA_values.pdf — left columns (NC Level + 8 octave bands)
 const NC_TABLE = {
-  15:[47,36,29,22,17,14,12,11], 16:[47.8,36.8,29.8,22.8,18,15,13,12],
-  17:[49.08,38.08,31.08,24.08,19.6,16.6,14.6,14], 18:[50.23,39.23,32.23,25.23,21.04,18.04,16.04,15.04],
-  19:[50.85,39.85,32.85,25.85,21.81,18.81,16.81,16], 20:[51,40,33,26,22,19,17,16],
-  21:[51.6,40.8,33.8,27,23,20,17,16], 22:[52.56,42.08,35.08,28.6,21.6,19.6,18.6],
-  23:[53.42,43.23,36.23,30.04,26.04,23.04,21.04,20.04], 24:[53.88,43.85,36.85,30.81,26.81,23.81,21.81,21.91],
-  25:[54,44,37,31,27,24,22,21], 26:[54.6,44.8,37.8,31.8,28.25,25,23,23],
-  27:[55.56,46.08,39.08,33.08,29.08,26.08,24.12], 28:[56.42,47.23,40.23,34.23,30.23,27.23,25.22,25.22],
-  29:[56.88,47.85,40.85,34.85,30.85,28.81,26.81,26.77], 30:[57,48,41,35,31,29,27,27],
-  31:[57.6,48.8,41.8,36,32,30,28,28], 32:[58.56,50.08,43.08,37.6,33.6,31,29,28],
-  33:[59.42,51.23,44.23,39.04,34.04,32.04,31,31], 34:[59.88,51.85,44.85,39.81,35,33,32,31],
-  35:[60,52,45,40,36,34,33,32], 36:[60.8,52.8,46,41,37,35,34,33],
-  37:[62.08,54.08,47.6,42.6,38.6,36.6,35.6,34.6], 38:[63.23,55.23,49.04,44.04,40.04,39.04,38,37.04],
-  39:[63.85,55.85,49.81,44.81,40.81,41.81,38.81,37.91], 40:[64,56,50,45,41,41,39,38],
-  41:[64.6,56.8,50.8,45.8,42,42,40,39], 42:[65.56,58.08,52.08,47.08,43.6,42.8,41.6,40.6],
-  43:[66.42,59.23,53.23,48.23,44.63,43.81,42.81,42.14], 44:[66.88,59.85,53.85,48.85,45.81,45.01,43.81,42.91],
-  45:[67,60,54,49,46,46,44,43], 46:[67.8,60.8,54.8,50,47,46.2,45,44.1],
-  47:[69.08,62.08,56.08,51.6,48.6,47.48,47.48,45.7], 48:[70.23,63.23,57.23,53.04,50.04,49.24,48.04,47.14],
-  49:[70.85,63.85,57.85,53.81,50.61,50.01,48.84,47.91], 50:[71,64,58,54,51,50.2,49,48],
-  51:[71.6,64.6,58.8,54.8,51.8,51.8,50,49], 52:[72.56,65.56,60.08,56.08,53.6,52.88,51.6,50.7],
-  53:[73.42,66.42,61.23,57.23,55.04,54.24,53.04,52.14], 54:[73.88,66.88,61.85,57.85,55.81,55.01,53.84,52.91],
-  55:[74,67,62,58,56,55.2,54,53], 56:[74.6,67.8,63,59,57,56.2,55,54],
-  57:[75.56,69.08,64.6,60.6,57.6,57.6,56.6,55.6], 58:[76.42,70.23,66.04,62.04,59.04,59.04,57.04,57.14],
-  59:[76.88,70.85,66.81,62.81,59.81,60.01,58.81,57.91], 60:[77,71,67,63,60.01,60.21,59,58.1],
-  61:[77.6,71.8,67.8,64,62,61.21,60,59.1], 62:[78.56,73.08,69.6,66.6,63.4,63.4,61.4,60.5],
-  63:[79.42,74.23,71.04,68.04,65.04,65.04,63.04,62.14], 64:[79.88,74.85,71.81,68.81,65.81,65.81,64,63],
-  65:[80,75,72,69,66,66,65,63], 66:[81,76,72,69,67,67,66,64],
-  67:[81,77,73,70,68,68,66,65], 68:[82,77,73,71,69,69,67,66],
-  69:[82,78,74,72,70,70,68,67], 70:[83,79,75,73,71,71,69,68],
-  71:[84,80,76,74,72,72,70,69], 72:[84,81,77,75,73,73,71,70],
-  73:[85,81,77,75,74,74,72,71], 74:[85,82,78,76,75,74,73,72],
-  75:[86,83,79,77,76,76,74,73], 76:[87,84,80,79,77,75,74,73],
-  77:[87,85,81,80,78,78,75,74], 78:[88,85,81,80,79,79,76,75],
-  79:[88,86,82,81,79,80,77,76], 80:[89,87,83,83,81,79,78,77],
+  15:[47,36,29,22,17,14,12,11],
+  16:[47.8,36.8,29.8,22.8,18,15,13,12],
+  17:[49.08,38.08,31.08,24.08,19.6,16.6,14.6,13.6],
+  18:[50.23,39.23,32.23,25.23,21.04,18.04,16.04,15.04],
+  19:[50.85,39.85,32.85,25.85,21.81,18.81,16.81,15.81],
+  20:[51,40,33,26,22,19,17,16],
+  21:[51.6,40.8,33.8,27,23,20,18,17],
+  22:[52.56,42.08,35.08,28.6,24.6,21.6,19.6,18.6],
+  23:[53.42,43.23,36.23,30.04,26.04,23.04,21.04,20.04],
+  24:[53.88,43.85,36.85,30.81,26.81,23.81,21.81,20.81],
+  25:[54,44,37,31,27,24,22,21],
+  26:[54.6,44.8,37.8,31.8,27.8,25,23.2,22.2],
+  27:[55.56,46.08,39.08,33.08,29.08,26.6,25.12,24.12],
+  28:[56.42,47.23,40.23,34.23,30.23,28.04,26.85,25.85],
+  29:[56.88,47.85,40.85,34.85,30.85,28.81,27.77,26.77],
+  30:[57,48,41,35,31,29,28,27],
+  31:[57.6,48.8,41.8,36,32,30,29,28],
+  32:[58.56,50.08,43.08,37.6,33.6,31.6,30.6,29.6],
+  33:[59.42,51.23,44.23,39.04,35.04,33.04,32.04,31.04],
+  34:[59.88,51.85,44.85,39.81,35.81,33.81,32.81,31.81],
+  35:[60,52,45,40,36,34,33,32],
+  36:[60.8,52.8,46,41,37,35,34,33],
+  37:[62.08,54.08,47.6,42.6,38.6,36.6,35.6,34.6],
+  38:[63.23,55.23,49.04,44.04,40.04,38.04,37.04,36.04],
+  39:[63.85,55.85,49.81,44.81,40.81,38.81,37.81,36.81],
+  40:[64,56,50,45,41,39,38,37],
+  41:[64.6,56.8,50.8,45.8,42,40,39,38],
+  42:[65.56,58.08,52.08,47.08,43.6,41.6,40.6,39.6],
+  43:[66.42,59.23,53.23,48.23,45.04,43.04,42.04,41.04],
+  44:[66.88,59.85,53.85,48.85,45.81,43.81,42.81,41.81],
+  45:[67,60,54,49,46,44,43,42],
+  46:[67.8,60.8,54.8,50,47,45,44,43],
+  47:[69.08,62.08,56.08,51.6,48.6,46.6,45.6,44.6],
+  48:[70.23,63.23,57.23,53.04,50.04,48.04,47.04,46.04],
+  49:[70.85,63.85,57.85,53.81,50.81,48.81,47.81,46.81],
+  50:[71,64,58,54,51,49,48,47],
+  51:[71.6,64.6,58.8,54.8,52,50,49,48],
+  52:[72.56,65.56,60.08,56.08,53.6,51.6,50.6,49.6],
+  53:[73.42,66.42,61.23,57.23,55.04,53.04,52.04,51.04],
+  54:[73.88,66.88,61.85,57.85,55.81,53.81,52.81,51.81],
+  55:[74,67,62,58,56,54,53,52],
+  56:[74.6,67.8,63,59,57,55,54,53],
+  57:[75.56,69.08,64.6,60.6,58.6,56.6,55.6,54.6],
+  58:[76.42,70.23,66.04,62.04,60.04,58.04,57.04,56.04],
+  59:[76.88,70.85,66.81,62.81,60.81,58.81,57.81,56.81],
+  60:[77,71,67,63,61,59,58,57],
+  61:[77.6,71.8,67.8,64,62,60,59,58],
+  62:[78.56,73.08,69.08,65.6,63.6,61.6,60.6,59.6],
+  63:[79.42,74.23,70.23,67.04,65.04,63.04,62.04,61.04],
+  64:[79.88,74.85,70.85,67.81,65.81,63.81,62.81,61.81],
+  65:[80,75,71,68,66,64,63,62],
+  66:[81,76,72,69,67,65,64,63],
+  67:[81,77,73,70,68,66,65,64],
+  68:[82,77,73,71,69,67,66,65],
+  69:[82,78,74,72,70,68,67,66],
+  70:[83,79,75,73,71,69,68,67],
+  71:[84,80,76,74,72,70,69,68],
+  72:[84,81,77,75,73,71,70,69],
+  73:[85,81,77,76,74,72,71,70],
+  74:[85,82,78,77,75,73,72,71],
+  75:[86,83,79,78,76,74,73,72],
+  76:[87,84,80,79,77,75,74,73],
+  77:[87,85,81,80,78,76,75,74],
+  78:[88,85,81,81,79,77,76,75],
+  79:[88,86,82,82,80,78,77,76],
+  80:[89,87,83,83,81,79,78,77],
 };
 
-// Find closest NC value to given STC and return per-band TL (negative = loss)
+// NC_TABLE_DBA: yellow-highlighted dB(A)-weighted per-band values from the same PDF (right columns)
+// key = NC level, values = [63,125,250,500,1000,2000,4000,8000 Hz] in dB(A)
+const NC_TABLE_DBA = {
+  15:[20.8,19.9,20.4,18.8,17.0,15.2,13.0,12.1],
+  16:[21.6,20.7,21.2,19.6,18.0,16.2,14.0,13.1],
+  17:[22.88,21.98,22.48,20.88,19.6,17.8,15.6,14.7],
+  18:[24.03,23.13,23.63,22.03,21.04,19.24,17.04,16.14],
+  19:[24.65,23.75,24.25,22.65,21.81,20.01,17.81,16.91],
+  20:[24.8,23.9,24.4,22.8,22.0,20.2,18.0,17.1],
+  21:[25.4,24.7,25.2,23.8,23.0,21.2,19.0,18.1],
+  22:[26.36,25.98,26.48,25.4,24.6,22.8,20.6,19.7],
+  23:[27.22,27.13,27.63,26.84,26.04,24.24,22.04,21.14],
+  24:[27.68,27.75,28.25,27.61,26.81,25.01,22.81,21.91],
+  25:[27.8,27.9,28.4,27.8,27.0,25.2,23.0,22.1],
+  26:[28.4,28.7,29.2,28.6,27.8,26.2,24.2,23.3],
+  27:[29.36,29.98,30.48,29.88,29.08,27.8,26.12,25.22],
+  28:[30.22,31.13,31.63,31.03,30.23,29.24,27.85,26.95],
+  29:[30.68,31.75,32.25,31.65,30.85,30.01,28.77,27.87],
+  30:[30.8,31.9,32.4,31.8,31.0,30.2,29.0,28.1],
+  31:[31.4,32.7,33.2,32.8,32.0,31.2,30.0,29.1],
+  32:[32.36,33.98,34.48,34.4,33.6,32.8,31.6,30.7],
+  33:[33.22,35.13,35.63,35.84,35.04,34.24,33.04,32.14],
+  34:[33.68,35.75,36.25,36.61,35.81,35.01,33.81,32.91],
+  35:[33.8,35.9,36.4,36.8,36.0,35.2,34.0,33.1],
+  36:[34.6,36.7,37.4,37.8,37.0,36.2,35.0,34.1],
+  37:[35.88,37.98,39.0,39.4,38.6,37.8,36.6,35.7],
+  38:[37.03,39.13,40.44,40.84,40.04,39.24,38.04,37.14],
+  39:[37.65,39.75,41.21,41.61,40.81,40.01,38.81,37.91],
+  40:[37.8,39.9,41.4,41.8,41.0,40.2,39.0,38.1],
+  41:[38.4,40.7,42.2,42.6,42.0,41.2,40.0,39.1],
+  42:[39.36,41.98,43.48,43.88,43.6,42.8,41.6,40.7],
+  43:[40.22,43.13,44.63,45.03,45.04,44.24,43.04,42.14],
+  44:[40.68,43.75,45.25,45.65,45.81,45.01,43.81,42.91],
+  45:[40.8,43.9,45.4,45.8,46.0,45.2,44.0,43.1],
+  46:[41.6,44.7,46.2,46.8,47.0,46.2,45.0,44.1],
+  47:[42.88,45.98,47.48,48.4,48.6,47.8,46.6,45.7],
+  48:[44.03,47.13,48.63,49.84,50.04,49.24,48.04,47.14],
+  49:[44.65,47.75,49.25,50.61,50.81,50.01,48.81,47.91],
+  50:[44.8,47.9,49.4,50.8,51.0,50.2,49.0,48.1],
+  51:[45.4,48.5,50.2,51.6,52.0,51.2,50.0,49.1],
+  52:[46.36,49.46,51.48,52.88,53.6,52.8,51.6,50.7],
+  53:[47.22,50.32,52.63,54.03,55.04,54.24,53.04,52.14],
+  54:[47.68,50.78,53.25,54.65,55.81,55.01,53.81,52.91],
+  55:[47.8,50.9,53.4,54.8,56.0,55.2,54.0,53.1],
+  56:[48.4,51.7,54.4,55.8,57.0,56.2,55.0,54.1],
+  57:[49.36,52.98,56.0,57.4,58.6,57.8,56.6,55.7],
+  58:[50.22,54.13,57.44,58.84,60.04,59.24,58.04,57.14],
+  59:[50.68,54.75,58.21,59.61,60.81,60.01,58.81,57.91],
+  60:[50.8,54.9,58.4,59.8,61.0,60.2,59.0,58.1],
+  61:[51.4,55.7,59.2,60.8,62.0,61.2,60.0,59.1],
+  62:[52.36,56.98,60.48,62.4,63.6,62.8,61.6,60.7],
+  63:[53.22,58.13,61.63,63.84,65.04,64.24,63.04,62.14],
+  64:[53.68,58.75,62.25,64.61,65.81,65.01,63.81,62.91],
+  65:[53.8,58.9,62.4,64.8,66.0,65.2,64.0,63.1],
+  66:[54.8,59.9,63.4,65.8,67.0,66.2,65.0,64.1],
+  67:[54.8,60.9,64.4,66.8,68.0,67.2,66.0,65.1],
+  68:[55.8,60.9,64.4,67.8,69.0,68.2,67.0,66.1],
+  69:[55.8,61.9,65.4,68.8,70.0,69.2,68.0,67.1],
+  70:[56.8,62.9,66.4,69.8,71.0,70.2,69.0,68.1],
+  71:[57.8,63.9,67.4,70.8,72.0,71.2,70.0,69.1],
+  72:[57.8,64.9,68.4,71.8,73.0,72.2,71.0,70.1],
+  73:[58.8,64.9,68.4,72.8,74.0,73.2,72.0,71.1],
+  74:[58.8,65.9,69.4,73.8,75.0,74.2,73.0,72.1],
+  75:[59.8,66.9,70.4,74.8,76.0,75.2,74.0,73.1],
+  76:[60.8,67.9,71.4,75.8,77.0,76.2,75.0,74.1],
+  77:[60.8,68.9,72.4,76.8,78.0,77.2,76.0,75.1],
+  78:[61.8,68.9,72.4,77.8,79.0,78.2,77.0,76.1],
+  79:[61.8,69.9,73.4,78.8,80.0,79.2,78.0,77.1],
+  80:[62.8,70.9,74.4,79.8,81.0,80.2,79.0,78.1],
+};
+
+// Get dB(A) per-band values for a given STC (maps to nearest NC in NC_TABLE_DBA)
+function stcToDbaPerBand(stc) {
+  const ncLevels = Object.keys(NC_TABLE_DBA).map(Number);
+  const closest = ncLevels.reduce((prev, curr) =>
+    Math.abs(curr - stc) < Math.abs(prev - stc) ? curr : prev
+  );
+  return NC_TABLE_DBA[closest];
+}
+
+// Transmission Loss per band: uses NC_TABLE_DBA (right-side dB(A) yellow values from document)
+// Returns negative values (attenuation) for use in Lp chain
 function stcToBandTL(stc) {
+  const ncLevels = Object.keys(NC_TABLE_DBA).map(Number);
+  const closest = ncLevels.reduce((prev, curr) =>
+    Math.abs(curr - stc) < Math.abs(prev - stc) ? curr : prev
+  );
+  return NC_TABLE_DBA[closest].map(v => -v);
+}
+
+// NC curve band values (left-side dB) — used for Receiver Location NC comparison
+function ncCurveBands(stc) {
   const ncLevels = Object.keys(NC_TABLE).map(Number);
   const closest = ncLevels.reduce((prev, curr) =>
     Math.abs(curr - stc) < Math.abs(prev - stc) ? curr : prev
   );
-  return NC_TABLE[closest].map(v => -v);
+  return NC_TABLE[closest];
 }
 
 function getNCForSTC(stc) {
@@ -239,10 +362,175 @@ function getNCForSTC(stc) {
   );
 }
 
+// NC Criteria table (right side of PDF) — per-band SPL limit for each NC level
+// Columns: [63, 125, 250, 500, 1000, 2000, 4000, 8000 Hz]
+const NC_CRITERIA = {
+  15:[47.42,20.80,17.00,15.20,14.00,12.10,12.10,27.18],
+  16:[48.22,21.60,20.70,21.20,19.60,18.00,16.20,14.00],
+  17:[49.50,22.88,21.98,22.48,20.88,19.00,17.80,15.60],
+  18:[50.65,24.03,23.13,23.63,22.03,21.04,19.24,17.04],
+  19:[51.26,24.65,23.85,24.29,22.65,21.81,20.01,17.81],
+  20:[51.42,24.80,23.90,24.40,22.80,22.00,20.20,18.00],
+  21:[52.04,25.40,24.70,25.20,23.80,23.00,21.20,18.10],
+  22:[53.03,26.36,25.98,26.48,25.40,24.60,22.80,20.60],
+  23:[53.93,27.22,27.13,27.63,26.84,26.04,24.24,22.04],
+  24:[54.41,27.68,27.85,28.25,27.61,26.81,24.81,22.81],
+  25:[54.53,27.80,27.90,28.40,27.80,27.00,25.20,23.00],
+  26:[55.15,28.40,28.40,28.80,28.60,27.20,25.20,23.20],
+  27:[56.15,29.36,29.98,30.48,29.36,29.08,27.80,26.12],
+  28:[57.05,30.22,31.13,31.63,31.03,30.23,27.85,26.95],
+  29:[57.54,30.68,31.75,32.25,31.65,30.85,30.01,28.77],
+  30:[57.66,30.81,31.80,32.30,31.80,31.00,29.20,28.10],
+  31:[58.29,31.40,32.70,33.20,32.80,32.00,31.20,30.00],
+  32:[59.29,32.36,33.20,33.80,34.40,32.00,31.20,30.00],
+  33:[60.22,33.22,35.13,35.63,35.84,35.04,34.24,33.04],
+  34:[60.71,33.68,35.75,36.25,36.61,35.81,35.01,33.81],
+  35:[60.83,33.80,35.90,36.40,36.80,36.00,35.20,33.10],
+  36:[61.64,34.60,36.70,37.40,37.80,37.00,36.20,35.00],
+  37:[62.93,35.88,37.98,39.00,39.40,38.60,37.80,36.60],
+  38:[64.10,37.03,39.13,40.84,40.84,40.04,39.24,38.04],
+  39:[64.72,37.68,41.21,41.63,40.81,40.81,40.81,38.81],
+  40:[64.88,37.80,39.90,41.40,41.80,41.00,40.20,39.00],
+  41:[65.52,38.40,40.60,42.60,42.60,42.00,41.20,39.00],
+  42:[66.54,39.36,41.98,43.48,43.88,43.60,42.80,41.60],
+  43:[67.47,40.22,43.13,44.63,45.03,45.04,44.24,43.04],
+  44:[67.97,40.68,43.75,45.25,45.65,45.81,45.01,43.81],
+  45:[67.97,40.80,43.90,45.40,45.80,46.00,45.01,43.81],
+  46:[68.90,41.60,44.70,46.80,46.80,47.00,46.20,45.00],
+  47:[70.19,42.88,47.48,47.48,49.84,48.60,47.48,45.70],
+  48:[71.35,44.03,47.13,48.63,49.84,50.04,49.24,48.04],
+  49:[71.97,44.65,47.90,50.61,50.61,50.81,50.01,48.84],
+  50:[72.12,44.80,47.90,49.40,50.80,51.00,50.20,49.00],
+  51:[72.74,45.40,49.46,51.48,52.88,53.60,52.80,51.60],
+  52:[73.73,46.36,49.46,51.48,52.88,53.60,52.80,51.60],
+  53:[74.63,47.22,50.32,52.63,54.03,55.04,54.24,53.04],
+  54:[75.11,47.68,50.90,53.25,54.65,55.81,55.01,53.84],
+  55:[75.23,47.80,50.90,53.40,54.80,56.00,55.20,54.00],
+  56:[75.90,48.40,51.70,54.80,55.80,57.00,55.20,55.00],
+  57:[76.98,49.36,52.98,56.40,57.40,57.80,57.60,56.60],
+  58:[77.97,50.22,53.13,57.44,58.84,58.84,58.04,57.04],
+  59:[78.49,50.68,54.13,57.81,59.61,60.81,59.01,58.81],
+  60:[78.63,50.80,54.75,58.21,59.61,60.81,59.01,58.81],
+  61:[79.31,51.40,55.70,59.20,60.80,62.00,61.20,60.00],
+  62:[80.40,52.36,57.40,60.60,63.40,63.40,62.40,61.40],
+  63:[81.39,53.22,58.13,61.63,63.84,65.04,64.24,63.04],
+  64:[81.39,53.68,58.75,62.23,64.61,65.81,64.61,64.00],
+  65:[82.06,53.80,58.90,62.40,64.80,66.00,65.20,64.00],
+  66:[83.06,54.80,59.90,63.40,65.80,67.00,66.20,65.00],
+  67:[83.46,54.80,60.90,64.40,66.80,68.00,66.20,66.10],
+  68:[84.17,55.80,61.90,65.80,67.80,69.20,67.20,66.10],
+  69:[84.59,55.80,61.90,65.40,68.80,70.00,69.20,68.00],
+  70:[85.59,56.80,62.90,66.40,69.80,71.00,70.20,69.00],
+  71:[86.59,57.80,63.90,67.40,70.80,72.00,71.20,70.00],
+  72:[87.07,57.80,64.90,68.40,71.80,73.00,72.20,71.00],
+  73:[87.75,57.80,64.90,68.40,72.80,74.00,72.20,71.00],
+  74:[88.25,58.80,65.90,69.40,73.80,74.00,73.20,72.00],
+  75:[89.25,59.80,66.90,70.40,74.80,76.00,74.20,73.00],
+  76:[90.25,60.80,67.90,71.40,75.80,75.00,75.00,74.00],
+  77:[90.80,60.80,68.90,72.40,76.80,78.00,75.00,74.00],
+  78:[91.46,61.80,68.90,72.40,77.80,79.00,77.20,76.00],
+  79:[92.04,61.80,68.90,74.40,79.80,80.00,77.20,76.00],
+  80:[93.04,62.80,70.90,74.40,79.80,81.00,80.20,79.00],
+};
+
+function getNCCriteria(nc) {
+  const levels = Object.keys(NC_CRITERIA).map(Number);
+  const closest = levels.reduce((prev,curr) =>
+    Math.abs(curr-nc) < Math.abs(prev-nc) ? curr : prev
+  );
+  return NC_CRITERIA[closest];
+}
+
+// Determine NC rating of an actual SPL per band: find highest NC curve not exceeded
+function calcNCRating(lpBand) {
+  const levels = Object.keys(NC_CRITERIA).map(Number).sort((a,b)=>a-b);
+  for (const nc of levels) {
+    const crit = NC_CRITERIA[nc];
+    const exceeded = BAND_KEYS.some((k,i) => (lpBand[k]??0) > crit[i]);
+    if (!exceeded) return nc;
+  }
+  return ">80";
+}
+
+// ── Full client-side Lp chain ─────────────────────────────────
+// Returns { hz63, hz125, … hz8000 } — Total Lp at receiver
+function calcLiveReceiverLp(form) {
+  const isDuctPath = DUCT_PATHS.includes(form.noisePath);
+  const swl = { ...form.generator.swl };
+
+  // 2. Duct IL — only for exhaust/intake paths
+  const ductIL = BAND_KEYS.map(() => 0);
+  if (isDuctPath) {
+    form.ducts.forEach(duct => {
+      const isDuctLined = duct.lining === "lined";
+      let il;
+      if (isDuctLined) {
+        const res = calcLinedIL(duct.width_mm, duct.height_mm, duct.length_m, duct.liningThickness_in, duct.coeffA);
+        il = res ? BAND_KEYS.map((_,i) => res[i] ?? 0) : BAND_KEYS.map(()=>0);
+      } else {
+        il = BAND_KEYS.map(() => 0);
+      }
+      const elbowArr = calcElbowIL(duct.width_mm, duct.elbows, isDuctLined);
+      const elbowIL = elbowArr || BAND_KEYS.map(() => 0);
+      BAND_KEYS.forEach((_,i) => { ductIL[i] += (il[i]||0) + (elbowIL[i]||0); });
+    });
+  }
+
+  // 3. ERL — only for duct paths
+  const erlArr = isDuctPath
+    ? (calcERL(form.erl.width_mm, form.erl.height_mm) || BAND_KEYS.map(()=>0))
+    : BAND_KEYS.map(()=>0);
+
+  // 4. Space Room (Schultz) OR Distance Effect — mutual exclusive
+  const useSpaceRoom = form.roomOrDistance === "spaceRoom";
+  const schultz = useSpaceRoom
+    ? (liveSchultzOffsets(form.room.length_m, form.room.width_m, form.room.height_m, form.room.distance_m) || BAND_KEYS.map(()=>0))
+    : BAND_KEYS.map(()=>0);
+  const deObj = !useSpaceRoom
+    ? calcDistanceEffect(form.distanceEffect.distance_m, form.distanceEffect.directivity)
+    : null;
+  const deArr = deObj ? BAND_KEYS.map(k => deObj[k]||0) : BAND_KEYS.map(()=>0);
+
+  // 5. Attenuator IL
+  const attArr = BAND_KEYS.map(k => Number(form.attenuator.il?.[k])||0);
+
+  // 6. Through-path TL (wall/door/ceiling — applied as negative IL, from NC_TABLE lookup)
+  let throughTL = BAND_KEYS.map(()=>0);
+  if (form.noisePath === "through_wall") {
+    throughTL = stcToBandTL(Number(form.throughPath?.wall_stc)||45);
+  } else if (form.noisePath === "through_door") {
+    throughTL = stcToBandTL(Number(form.throughPath?.door_stc)||35);
+  } else if (form.noisePath === "through_ceiling_above" || form.noisePath === "through_ceiling_below") {
+    {
+      throughTL = stcToBandTL(Number(form.throughPath?.ceiling_stc)||45);
+    }
+  }
+
+  // 7. Combine
+  const lp = {};
+  BAND_KEYS.forEach((k,i) => {
+    const swlV = Number(swl[k])||0;
+    lp[k] = round1(
+      swlV
+      + (ductIL[i]||0)
+      + (erlArr[i]||0)
+      + (schultz[i]||0)
+      + (deArr[i]||0)
+      - (attArr[i]||0)
+      + (throughTL[i]||0)
+    );
+  });
+  return lp;
+}
+
 // Through Ceiling (Above/Below) — Ground Floor Slab values
 const CEILING_TL = [-36, -37, -41, -45, -49, -53, -57, -61];
 // Through False Ceiling — Gypsum ceiling values
 const FALSE_CEILING_TL = [-18, -21, -25, -25, -27, -27, -28, -28];
+
+// ── Construction type: free-text label + STC input (no preset dropdown) ──────
+// User types the construction description; STC drives live per-band TL from NC_TABLE
+// wall_label / door_label / ceiling_label are stored to backend as descriptive text
 
 // ── End Reflection Loss ───────────────────────────────────────
 // ERL = 10·log₁₀[ 1 + (a1·co / π·f·D)^a2 ] × −1
@@ -288,8 +576,21 @@ const defaultDuct = (idx = 0) => ({
   _showCoeff:       false,
 });
 
+const NOISE_PATHS = [
+  { value:"exhaust",          label:"Exhaust Air" },
+  { value:"intake",           label:"Intake Air" },
+  { value:"through_wall",     label:"Through Wall" },
+  { value:"through_door",     label:"Through Door" },
+  { value:"through_ceiling_above", label:"Through Ceiling Above" },
+  { value:"through_ceiling_below", label:"Through Ceiling Below" },
+];
+
+// Paths that use duct / ERL routing
+const DUCT_PATHS = ["exhaust","intake"];
+
 const DEFAULT = {
-  noisePath:  "exhaust",
+  noisePath:       "exhaust",
+  roomOrDistance:  "spaceRoom",  // "spaceRoom" | "distanceEffect"
   generator: {
     noiseInputType: "swl_db", measurementDistance_m: 1,
     equipmentId:"", modelNumber:"", ratedKva:0, buildingRef:"", swl_dba:0,
@@ -302,13 +603,14 @@ const DEFAULT = {
   attenuator:     { model:"", width_mm:0, height_mm:0, length_mm:0, pressureDrop_pa:0, il:{ ...EMPTY_BAND } },
   receiver:       { description:"", distance_m:3, directivity:2, requiredNC:65, requiredNR:65, required_dba:65, ncNrChoice:"NC" },
   distanceEffect: { distance_m:3, directivity:1 },
-  radiated: {
-    losses: [],   // array of active loss type ids: "wall","door","ceiling","falseCeiling"
-    wall:         { stc: 45 },
-    door:         { stc: 35 },
-    ceiling:      {},   // fixed values, no user input
-    falseCeiling: {},   // fixed values, no user input
-    spaceRoom:    { length_m:0, width_m:0, height_m:0, distance_m:3 },
+  // Through-wall / door / ceiling path TL inputs (stored to backend)
+  throughPath: {
+    wall_label:    "",   // free-text: e.g. "230mm Brick Wall"
+    wall_stc:      45,
+    door_label:    "",   // free-text: e.g. "Solid Core Timber Door"
+    door_stc:      35,
+    ceiling_label: "",   // free-text: e.g. "150mm Concrete Slab"
+    ceiling_stc:   45,
   },
 };
 
@@ -395,9 +697,6 @@ function BandGrid({ label, values, onChange, onLiveChange, note, readOnly, highl
                   borderRadius:6, minWidth:60, width:70,
                 }}>
                   {b} Hz
-                  <div style={{ fontSize:9.5, color:"#64748B", fontWeight:500, marginTop:1 }}>
-                    A={A_WEIGHT[i]>0?"+":""}{A_WEIGHT[i]}
-                  </div>
                 </th>
               ))}
             </tr>
@@ -566,11 +865,8 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         attenuator:     { ...DEFAULT.attenuator,     ...existing.attenuator     },
         receiver:       { ...DEFAULT.receiver,       ...existing.receiver       },
         distanceEffect: { ...DEFAULT.distanceEffect, ...existing.distanceEffect },
-        radiated:       { ...DEFAULT.radiated,       ...existing.radiated,
-          wall:         { ...DEFAULT.radiated.wall,         ...(existing.radiated?.wall         || {}) },
-          door:         { ...DEFAULT.radiated.door,         ...(existing.radiated?.door         || {}) },
-          spaceRoom:    { ...DEFAULT.radiated.spaceRoom,    ...(existing.radiated?.spaceRoom    || {}) },
-        },
+        roomOrDistance: existing.roomOrDistance ?? "spaceRoom",
+        throughPath: { ...DEFAULT.throughPath, ...(existing.throughPath||{}) },
       };
     }
     return { ...DEFAULT };
@@ -578,6 +874,9 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
 
   const [saving,  setSaving]  = useState(false);
   const [running, setRunning] = useState(false);
+
+  // Live receiver Lp — recomputes on every form change, no backend needed
+  const liveLp = useMemo(() => calcLiveReceiverLp(form), [form]);
 
   // Setters
   const setG = (k,v) => setForm(f => {
@@ -597,14 +896,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
   const setDE  = (k,v) => setForm(f=>({...f, distanceEffect:{...f.distanceEffect,[k]:v}}));
   const setAW = useCallback(v=>setForm(f=>({...f, attenuator:{...f.attenuator, il:v}})),[]);
   const setRc = (k,v) => setForm(f=>({...f, receiver:{...f.receiver,[k]:v}}));
-  const setRad = (k,v) => setForm(f=>({...f, radiated:{...f.radiated,[k]:v}}));
-  const setRadSub = (sub,k,v) => setForm(f=>({...f, radiated:{...f.radiated,[sub]:{...f.radiated[sub],[k]:v}}}));
-  const toggleRadLoss = (id) => setForm(f=>{
-    const losses = f.radiated.losses.includes(id)
-      ? f.radiated.losses.filter(x=>x!==id)
-      : [...f.radiated.losses, id];
-    return {...f, radiated:{...f.radiated, losses}};
-  });
+  const setTP = (k,v) => setForm(f=>({...f, throughPath:{...f.throughPath,[k]:v}}));
 
   // Duct helpers
   const addDuct = () => setForm(f => ({ ...f, ducts:[...f.ducts, defaultDuct(f.ducts.length)] }));
@@ -631,11 +923,16 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
     return Object.fromEntries(BAND_KEYS.map((k,i)=>[k, schultzOffsets[i]]));
   }, [schultzOffsets]);
 
+  // Strip internal UI keys before sending to backend
+  const buildPayload = () => ({
+    ...form,
+    ducts: form.ducts.map(({_showCoeff,_showElbow,...d})=>d),
+  });
+
   const handleRun = async () => {
     setRunning(true);
     try {
-      const payload = { ...form, ducts: form.ducts.map(({_showCoeff,_showElbow,...rest})=>rest) };
-      const { data } = await runCalculationApi(projectId, payload);
+      const { data } = await runCalculationApi(projectId, buildPayload());
       onResults(data.results, form.receiver);
       toast.success("Calculation complete");
     } catch(err) {
@@ -646,7 +943,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload = { ...form, ducts: form.ducts.map(({_showCoeff,_showElbow,...rest})=>rest) };
+      const payload = buildPayload();
       let calc;
       if (existing?._id) {
         const { data } = await updateCalculationApi(projectId, existing._id, payload);
@@ -682,7 +979,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
       <div style={{ background:"#fff", borderRadius:12, border:"1px solid #E2E8F0", padding:"13px 16px" }}>
         <p style={{ fontSize:11, fontWeight:700, color:"#475569", textTransform:"uppercase", letterSpacing:".05em", fontFamily:"Inter,sans-serif", margin:"0 0 10px" }}>Noise Path</p>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-          {[{value:"exhaust",label:"Exhaust Air"},{value:"intake",label:"Intake Air"},{value:"radiated",label:"Radiated"}].map(p=>(
+          {NOISE_PATHS.map(p=>(
             <button key={p.value} type="button" onClick={()=>setForm(f=>({...f,noisePath:p.value}))}
               style={{
                 padding:"7px 16px", borderRadius:8,
@@ -757,233 +1054,141 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </div>
       </Section>
 
-      {/* ── RADIATED: Transmission Loss section ── */}
-      {form.noisePath === "radiated" && (() => {
-        const LOSS_OPTIONS = [
-          { id:"wall",         label:"Through Wall",                color:"#3B82F6" },
-          { id:"door",         label:"Through Door",                color:"#8B5CF6" },
-          { id:"ceiling",      label:"Through Ceiling (Above/Below)",color:"#0E9F8E" },
-          { id:"falseCeiling", label:"Through False Ceiling",        color:"#F59E0B" },
-        ];
-        const active = form.radiated.losses;
+      {/* ── Transmission Loss — Through Wall / Door / Ceiling ── */}
+      {(form.noisePath === "through_wall" || form.noisePath === "through_door" ||
+        form.noisePath === "through_ceiling_above" || form.noisePath === "through_ceiling_below") && (() => {
 
-        // compute combined TL (sum all active losses) per band
-        const tlMatrix = active.map(id => {
-          if (id === "wall")         return stcToBandTL(Number(form.radiated.wall.stc)||45);
-          if (id === "door")         return stcToBandTL(Number(form.radiated.door.stc)||35);
-          if (id === "ceiling")      return CEILING_TL;
-          if (id === "falseCeiling") return FALSE_CEILING_TL;
-          return BANDS.map(()=>0);
-        });
-        const combinedTL = BANDS.map((_,i) => tlMatrix.reduce((sum,row)=>sum+row[i], 0));
-        const combinedObj = Object.fromEntries(BAND_KEYS.map((k,i)=>[k, Math.round(combinedTL[i]*100)/100]));
+        const isWall    = form.noisePath === "through_wall";
+        const isDoor    = form.noisePath === "through_door";
+        const ceilLabel = form.noisePath === "through_ceiling_above" ? "Ceiling Above" : "Ceiling Below";
+        const sectionLabel = isWall ? "Through Wall" : isDoor ? "Through Door" : `Through ${ceilLabel}`;
+
+        // Color / accent per path
+        const color     = isWall ? "#3B82F6" : isDoor ? "#8B5CF6" : "#0E9F8E";
+        const bgLight   = isWall ? "#EFF6FF"  : isDoor ? "#F5F3FF"  : "#ECFDF5";
+        const border    = isWall ? "#BFDBFE"  : isDoor ? "#DDD6FE"  : "#A7F3D0";
+        const textColor = isWall ? "#1D4ED8"  : isDoor ? "#6D28D9"  : "#065F46";
+        const chipBg    = isWall ? "#DBEAFE"  : isDoor ? "#EDE9FE"  : "#D1FAE5";
+
+        // Keys for this path
+        const labelKey  = isWall ? "wall_label"    : isDoor ? "door_label"    : "ceiling_label";
+        const stcKey    = isWall ? "wall_stc"       : isDoor ? "door_stc"       : "ceiling_stc";
+        const typeLabel = isWall ? "Wall Type"      : isDoor ? "Door Type"      : "Ceiling Type";
+        const stcLabel  = isWall ? "Wall STC Rating": isDoor ? "Door STC Rating": "Ceiling STC Rating";
+
+        // Band values: left = NC curve dB (receiver location), right = dB(A) yellow = TL applied
+        const stcVal   = Number(form.throughPath?.[stcKey]) || (isWall ? 45 : isDoor ? 35 : 45);
+        const ncBands  = ncCurveBands(stcVal);         // left-column NC curve (dB) — receiver location
+        const dbaArr   = stcToDbaPerBand(stcVal);      // right-column dB(A) yellow — Transmission Loss
+        const tlArr    = stcToBandTL(stcVal);          // same as dbaArr but negative (for Lp chain)
+        const nc       = getNCForSTC(stcVal);
 
         return (
-          <Section icon={Layers} title="Transmission Loss (Radiated)" color="#EF4444">
+          <Section icon={Layers} title={`Transmission Loss — ${sectionLabel}`} color={color}>
             <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
 
-              {/* loss type toggles */}
+              {/* Construction type — free text input, stored to backend */}
               <div>
-                <p style={{ fontSize:11, fontWeight:700, color:"#6B7280", textTransform:"uppercase", letterSpacing:".05em", margin:"0 0 8px", fontFamily:"Inter,sans-serif" }}>
-                  Select Loss Type(s) — choose one or more
+                <p style={{ fontSize:12, fontWeight:700, color:"#334155", fontFamily:"Plus Jakarta Sans,sans-serif", margin:"0 0 6px" }}>
+                  {typeLabel}
                 </p>
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                  {LOSS_OPTIONS.map(opt=>{
-                    const on = active.includes(opt.id);
-                    return (
-                      <button key={opt.id} type="button" onClick={()=>toggleRadLoss(opt.id)}
-                        style={{
-                          padding:"7px 14px", borderRadius:8, fontSize:13, fontWeight:600,
-                          cursor:"pointer", fontFamily:"Inter,sans-serif", transition:"all .15s",
-                          border:`1.5px solid ${on ? opt.color : "#E2E8F0"}`,
-                          background: on ? opt.color+"1A" : "#fff",
-                          color: on ? opt.color : "#64748B",
-                        }}>
-                        {on ? "✓ " : ""}{opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                <input
+                  type="text"
+                  placeholder={isWall ? "e.g. 230mm Brick Wall" : isDoor ? "e.g. Solid Core Timber Door" : "e.g. 150mm Concrete Slab"}
+                  value={form.throughPath?.[labelKey] ?? ""}
+                  onChange={e => setTP(labelKey, e.target.value)}
+                  style={{
+                    width:"100%", maxWidth:380, padding:"9px 13px", borderRadius:9, fontSize:13.5,
+                    fontFamily:"Inter,sans-serif", border:"1.5px solid #E2E8F0", outline:"none",
+                    background:"#F8FAFC", color:"#1E293B", boxSizing:"border-box",
+                    transition:"border .15s",
+                  }}
+                  onFocus={e=>{ e.target.style.borderColor=color; e.target.style.background="#fff"; }}
+                  onBlur={e=>{ e.target.style.borderColor="#E2E8F0"; e.target.style.background="#F8FAFC"; }}
+                />
+                <p style={{ fontSize:11, color:"#94A3B8", margin:"5px 0 0", fontFamily:"Inter,sans-serif" }}>
+                  Describe the construction — saved to report.
+                </p>
               </div>
 
-              {/* per-type inputs */}
-              {active.includes("wall") && (() => {
-                const wallStc = Number(form.radiated.wall.stc)||45;
-                const wallNC  = getNCForSTC(wallStc);
-                const wallTL  = stcToBandTL(wallStc);
-                return (
-                  <div style={{ background:"#EFF6FF", borderRadius:10, padding:"14px 16px", border:"1px solid #BFDBFE" }}>
-                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:12 }}>
-                      <p style={{ fontSize:12, fontWeight:700, color:"#1D4ED8", margin:0, fontFamily:"Inter,sans-serif" }}>Through Wall</p>
-                      <span style={{ fontSize:11, fontWeight:600, padding:"2px 10px", borderRadius:99, background:"#DBEAFE", color:"#1D4ED8", fontFamily:"Inter,sans-serif" }}>
-                        STC {wallStc} → NC {wallNC}
-                      </span>
-                    </div>
-                    <div style={{ maxWidth:200 }}>
-                      <NumInput label="Wall STC Rating" value={form.radiated.wall.stc}
-                        onChange={v=>setRadSub("wall","stc",v)} onLiveChange={v=>setRadSub("wall","stc",v)}
-                        unit="dB" step={1}/>
-                    </div>
-                    <div style={{ marginTop:12, background:"#fff", borderRadius:8, padding:"12px 14px", border:"1px solid #BFDBFE" }}>
-                      <p style={{ fontSize:11, fontWeight:700, color:"#1D4ED8", margin:"0 0 10px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
-                        Wall TL per Band (dB) — NC {wallNC} table
-                      </p>
-                      <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
-                        {BANDS.map((b,i) => (
-                          <div key={b} style={{ textAlign:"center" }}>
-                            <div style={{ fontSize:10, fontWeight:600, color:"#64748B", marginBottom:4, fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
-                            <div style={{ background:"#1D4ED8", color:"#fff", borderRadius:6, padding:"6px 2px", fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
-                              {wallTL[i]}
-                            </div>
-                          </div>
-                        ))}
+              {/* STC input + NC badge */}
+              <div style={{ display:"flex", alignItems:"flex-end", gap:16, flexWrap:"wrap" }}>
+                <div style={{ maxWidth:220 }}>
+                  <NumInput
+                    label={stcLabel}
+                    value={stcVal}
+                    onChange={v=>setTP(stcKey,v)}
+                    onLiveChange={v=>setTP(stcKey,v)}
+                    unit="dB" step={1}
+                  />
+                </div>
+                <span style={{ fontSize:12, fontWeight:700, padding:"5px 13px", borderRadius:99,
+                  background:chipBg, color:textColor, fontFamily:"Inter,sans-serif", marginBottom:2 }}>
+                  STC {stcVal} → NC {nc}
+                </span>
+              </div>
+
+              {/* Live per-band table — NC curve dB + dB(A) from document */}
+              <div style={{ background:bgLight, borderRadius:10, padding:"14px 16px", border:`1px solid ${border}` }}>
+                <p style={{ fontSize:11, fontWeight:700, color:textColor, margin:"0 0 12px",
+                  fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                  NC {nc} Band Values (STC {stcVal})
+                </p>
+
+                {/* Header row */}
+                <div style={{ display:"grid", gridTemplateColumns:"110px repeat(8,1fr)", gap:5, marginBottom:6 }}>
+                  <div/>
+                  {BANDS.map(b => (
+                    <div key={b} style={{ textAlign:"center", fontSize:10, fontWeight:700,
+                      color:"#64748B", fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
+                  ))}
+                </div>
+
+                {/* Row 1: NC curve dB — used for Receiver Location comparison */}
+                <div style={{ display:"grid", gridTemplateColumns:"110px repeat(8,1fr)", gap:5, marginBottom:6 }}>
+                  <div style={{ display:"flex", flexDirection:"column", justifyContent:"center" }}>
+                    <span style={{ fontSize:11, fontWeight:700, color:textColor, fontFamily:"Inter,sans-serif" }}>dB</span>
+                    <span style={{ fontSize:9.5, color:"#64748B", fontFamily:"Inter,sans-serif", marginTop:1 }}>Receiver Location</span>
+                  </div>
+                  {BANDS.map((b,i) => (
+                    <div key={b} style={{ textAlign:"center" }}>
+                      <div style={{ background:color, color:"#fff", borderRadius:6, padding:"6px 2px",
+                        fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
+                        {ncBands ? ncBands[i] : "—"}
                       </div>
                     </div>
-                  </div>
-                );
-              })()}
+                  ))}
+                </div>
 
-              {active.includes("door") && (() => {
-                const doorStc = Number(form.radiated.door.stc)||35;
-                const doorNC  = getNCForSTC(doorStc);
-                const doorTL  = stcToBandTL(doorStc);
-                return (
-                  <div style={{ background:"#F5F3FF", borderRadius:10, padding:"14px 16px", border:"1px solid #DDD6FE" }}>
-                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:12 }}>
-                      <p style={{ fontSize:12, fontWeight:700, color:"#6D28D9", margin:0, fontFamily:"Inter,sans-serif" }}>Through Door</p>
-                      <span style={{ fontSize:11, fontWeight:600, padding:"2px 10px", borderRadius:99, background:"#EDE9FE", color:"#6D28D9", fontFamily:"Inter,sans-serif" }}>
-                        STC {doorStc} → NC {doorNC}
-                      </span>
-                    </div>
-                    <div style={{ maxWidth:200 }}>
-                      <NumInput label="Door STC Rating" value={form.radiated.door.stc}
-                        onChange={v=>setRadSub("door","stc",v)} onLiveChange={v=>setRadSub("door","stc",v)}
-                        unit="dB" step={1}/>
-                    </div>
-                    <div style={{ marginTop:12, background:"#fff", borderRadius:8, padding:"12px 14px", border:"1px solid #DDD6FE" }}>
-                      <p style={{ fontSize:11, fontWeight:700, color:"#6D28D9", margin:"0 0 10px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
-                        Door TL per Band (dB) — NC {doorNC} table
-                      </p>
-                      <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
-                        {BANDS.map((b,i) => (
-                          <div key={b} style={{ textAlign:"center" }}>
-                            <div style={{ fontSize:10, fontWeight:600, color:"#64748B", marginBottom:4, fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
-                            <div style={{ background:"#7C3AED", color:"#fff", borderRadius:6, padding:"6px 2px", fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
-                              {doorTL[i]}
-                            </div>
-                          </div>
-                        ))}
+                {/* Row 2: dB(A) yellow values — used as Transmission Loss */}
+                <div style={{ display:"grid", gridTemplateColumns:"110px repeat(8,1fr)", gap:5 }}>
+                  <div style={{ display:"flex", flexDirection:"column", justifyContent:"center" }}>
+                    <span style={{ fontSize:11, fontWeight:700, color:"#B45309", fontFamily:"Inter,sans-serif" }}>dB(A)</span>
+                    <span style={{ fontSize:9.5, color:"#64748B", fontFamily:"Inter,sans-serif", marginTop:1 }}>Transmission Loss</span>
+                  </div>
+                  {BANDS.map((b,i) => (
+                    <div key={b} style={{ textAlign:"center" }}>
+                      <div style={{ background:"#FEF9C3", color:"#92400E", borderRadius:6, padding:"6px 2px",
+                        fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif", border:"1px solid #FDE68A" }}>
+                        {dbaArr ? dbaArr[i] : "—"}
                       </div>
                     </div>
-                  </div>
-                );
-              })()}
-
-              {active.includes("ceiling") && (
-                <div style={{ background:"#ECFDF5", borderRadius:10, padding:"14px 16px", border:"1px solid #A7F3D0" }}>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:12 }}>
-                    <p style={{ fontSize:12, fontWeight:700, color:"#065F46", margin:0, fontFamily:"Inter,sans-serif" }}>Through Ceiling (Above / Below)</p>
-                    <span style={{ fontSize:11, fontWeight:600, padding:"2px 10px", borderRadius:99, background:"#D1FAE5", color:"#065F46", fontFamily:"Inter,sans-serif" }}>Ground Floor Slab — fixed</span>
-                  </div>
-                  <div style={{ background:"#fff", borderRadius:8, padding:"12px 14px", border:"1px solid #A7F3D0" }}>
-                    <p style={{ fontSize:11, fontWeight:700, color:"#065F46", margin:"0 0 10px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>Ceiling TL per Band (dB)</p>
-                    <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
-                      {BANDS.map((b,i) => (
-                        <div key={b} style={{ textAlign:"center" }}>
-                          <div style={{ fontSize:10, fontWeight:600, color:"#64748B", marginBottom:4, fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
-                          <div style={{ background:"#0E9F8E", color:"#fff", borderRadius:6, padding:"6px 2px", fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
-                            {CEILING_TL[i]}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  ))}
                 </div>
-              )}
 
-              {active.includes("falseCeiling") && (
-                <div style={{ background:"#FFFBEB", borderRadius:10, padding:"14px 16px", border:"1px solid #FDE68A" }}>
-                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:12 }}>
-                    <p style={{ fontSize:12, fontWeight:700, color:"#92400E", margin:0, fontFamily:"Inter,sans-serif" }}>Through False Ceiling</p>
-                    <span style={{ fontSize:11, fontWeight:600, padding:"2px 10px", borderRadius:99, background:"#FEF3C7", color:"#92400E", fontFamily:"Inter,sans-serif" }}>Gypsum — ASHRAE 2015 — fixed</span>
-                  </div>
-                  <div style={{ background:"#fff", borderRadius:8, padding:"12px 14px", border:"1px solid #FDE68A" }}>
-                    <p style={{ fontSize:11, fontWeight:700, color:"#92400E", margin:"0 0 10px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>False Ceiling TL per Band (dB)</p>
-                    <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
-                      {BANDS.map((b,i) => (
-                        <div key={b} style={{ textAlign:"center" }}>
-                          <div style={{ fontSize:10, fontWeight:600, color:"#64748B", marginBottom:4, fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
-                          <div style={{ background:"#D97706", color:"#fff", borderRadius:6, padding:"6px 2px", fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
-                            {FALSE_CEILING_TL[i]}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* combined preview */}
-              {active.length > 1 && (
-                <div style={{ background:"#FEF2F2", borderRadius:10, padding:"14px 16px", border:"1px solid #FECACA" }}>
-                  <p style={{ fontSize:12, fontWeight:700, color:"#991B1B", margin:"0 0 12px", fontFamily:"Inter,sans-serif" }}>
-                    Combined Transmission Loss — {active.length} paths summed
-                  </p>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
-                    {BANDS.map((b,i) => (
-                      <div key={b} style={{ textAlign:"center" }}>
-                        <div style={{ fontSize:10, fontWeight:600, color:"#64748B", marginBottom:4, fontFamily:"Inter,sans-serif" }}>{b} Hz</div>
-                        <div style={{ background:"#DC2626", color:"#fff", borderRadius:6, padding:"6px 2px", fontSize:13, fontWeight:700, fontFamily:"Inter,sans-serif" }}>
-                          {Math.round(combinedTL[i]*10)/10}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                <p style={{ fontSize:11, color:"#94A3B8", margin:"10px 0 0", fontFamily:"Inter,sans-serif" }}>
+                  dB = NC curve (left column) for receiver comparison. dB(A) = yellow column from document, applied as TL in Lp chain.
+                </p>
+              </div>
 
             </div>
           </Section>
         );
       })()}
 
-      {/* ── RADIATED: Space Room Effect ── */}
-      {form.noisePath === "radiated" && (() => {
-        const sr = form.radiated.spaceRoom;
-        const schultz = liveSchultzOffsets(sr.length_m, sr.width_m, sr.height_m, sr.distance_m);
-        const schultzObj = schultz ? Object.fromEntries(BAND_KEYS.map((k,i)=>[k,Math.round(schultz[i]*100)/100])) : null;
-        const V = Number(sr.length_m)*Number(sr.width_m)*Number(sr.height_m);
-        return (
-          <Section icon={Box} title="Space / Room Effect (Radiated)" color="#3B82F6">
-            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-              {schultz && (
-                <div style={{ background:"#EFF6FF", borderRadius:10, padding:"11px 14px", border:"1px solid #BFDBFE", fontSize:12.5, color:"#1D4ED8", fontFamily:"Inter,sans-serif" }}>
-                  <Info size={13} style={{ verticalAlign:"middle", marginRight:5 }}/>
-                  Schultz Room Equation: L<sub>p</sub> = L<sub>w</sub> − 10·log(r) − 5·log(V) − 3·log(f) + 12
-                  {V>0 && <> &nbsp;·&nbsp; Volume = {Math.round(V)} m³</>}
-                </div>
-              )}
-              <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
-                <NumInput label="Length" value={sr.length_m} onChange={v=>setRadSub("spaceRoom","length_m",v)} onLiveChange={v=>setRadSub("spaceRoom","length_m",v)} unit="m" step={0.5}/>
-                <NumInput label="Width"  value={sr.width_m}  onChange={v=>setRadSub("spaceRoom","width_m",v)}  onLiveChange={v=>setRadSub("spaceRoom","width_m",v)}  unit="m" step={0.5}/>
-                <NumInput label="Ceiling Height" value={sr.height_m} onChange={v=>setRadSub("spaceRoom","height_m",v)} onLiveChange={v=>setRadSub("spaceRoom","height_m",v)} unit="m" step={0.5}/>
-                <NumInput label="Distance to Receiver" value={sr.distance_m} onChange={v=>setRadSub("spaceRoom","distance_m",v)} onLiveChange={v=>setRadSub("spaceRoom","distance_m",v)} unit="m" step={0.5}/>
-              </div>
-              {schultzObj && (
-                <div style={{ background:"#F0FDF4", borderRadius:10, padding:"12px 14px", border:"1px solid #BBF7D0" }}>
-                  <BandGrid label="Live Schultz Offset per Octave Band (dB)" values={schultzObj} onChange={()=>{}} readOnly highlightColor="#3B82F6"/>
-                </div>
-              )}
-              {!schultz && (
-                <p style={{ fontSize:12, color:"#9CA3AF", fontStyle:"italic", fontFamily:"Inter,sans-serif" }}>Enter room dimensions to see live Schultz attenuation.</p>
-              )}
-            </div>
-          </Section>
-        );
-      })()}
 
-      {/* ── 2. Duct(s) — hidden for radiated path ── */}
-      {form.noisePath !== "radiated" && <Section icon={Wind} title={`Duct(s) / Opening`} color="#8B5CF6"
+      {/* ── 2. Duct(s) — only for exhaust/intake paths ── */}
+      {DUCT_PATHS.includes(form.noisePath) && <Section icon={Wind} title={`Duct(s) / Opening`} color="#8B5CF6"
         badge={`${form.ducts.length} duct${form.ducts.length!==1?"s":""}`}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
 
@@ -1073,35 +1278,10 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
                         </div>
                       </div>
 
-                      {/* Default coefficient tables */}
-                      {[
-                        ["Coeff A (B) — Manufacturer value", BAND_KEYS.map((k,i) => {
-                          const ov = duct.coeffA?.[k];
-                          return (ov !== undefined && ov !== 0 && ov !== "") ? Number(ov) : LINED_DEFAULT.A[i];
-                        }), true],
-                        ["Coeff B (C) — Constant",           LINED_DEFAULT.B, false],
-                        ["Coeff C (D) — Constant",           LINED_DEFAULT.C, false],
-                      ].map(([lbl, vals, isCoeffA]) => (
-                        <div key={lbl}>
-                          <p style={{ fontSize:10.5, fontWeight:700, color:"#6D28D9", fontFamily:"Inter,sans-serif", margin:"0 0 5px" }}>{lbl}</p>
-                          <div style={{ overflowX:"auto" }}>
-                            <table style={{ borderCollapse:"collapse", minWidth:480 }}>
-                              <thead><tr>{BANDS.map(b=><th key={b} style={{ padding:"3px 8px", textAlign:"center", fontSize:10.5, fontWeight:700, color:"#7C3AED", background:"#EDE9FE", border:"1px solid #DDD6FE", minWidth:56 }}>{b} Hz</th>)}</tr></thead>
-                              <tbody><tr>{vals.map((v,i)=>{
-                                const overridden = isCoeffA && duct.coeffA?.[BAND_KEYS[i]] !== undefined && duct.coeffA[BAND_KEYS[i]] !== 0 && duct.coeffA[BAND_KEYS[i]] !== "";
-                                return (
-                                  <td key={i} style={{ padding:"4px 6px", textAlign:"center", fontSize:11.5, fontWeight:600, color: overridden ? "#1D4ED8" : "#4C1D95", border:"1px solid #DDD6FE", background: overridden ? "#EFF6FF" : "#FAF8FF" }}>{v}</td>
-                                );
-                              })}</tr></tbody>
-                            </table>
-                          </div>
-                        </div>
-                      ))}
-
                       {/* Coeff A override — live */}
                       <div>
                         <p style={{ fontSize:10.5, fontWeight:700, color:"#2563EB", fontFamily:"Inter,sans-serif", margin:"0 0 5px" }}>
-                          Override Coeff A (B) per band — enter 0 to use default table above
+                          Override Coeff A (B) per band — leave 0 to use default
                         </p>
                         <BandGrid
                           values={duct.coeffA}
@@ -1190,8 +1370,8 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </div>
       </Section>}
 
-      {/* ── 3. End Reflection Factor — hidden for radiated path ── */}
-      {form.noisePath !== "radiated" && <Section icon={Waves} title="End Reflection Factor" color="#06B6D4" defaultOpen={false}>
+      {/* ── 3. End Reflection Factor — only for exhaust/intake paths ── */}
+      {DUCT_PATHS.includes(form.noisePath) && <Section icon={Waves} title="End Reflection Factor" color="#06B6D4" defaultOpen={false}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={{ background:"#ECFEFF", borderRadius:10, padding:"12px 14px", border:"1px solid #A5F3FC", fontSize:12.5, color:"#0E7490", fontFamily:"Inter,sans-serif" }}>
             <strong>ERL</strong> = 10·log₁₀[ 1 + (a₁·c₀ / π·f·D)² ] × −1 &nbsp;&nbsp;
@@ -1224,8 +1404,26 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </div>
       </Section>}
 
-      {/* ── 4. Plant Room / Space Room — hidden for radiated path ── */}
-      {form.noisePath !== "radiated" && <Section icon={Box} title="Plant Room / Space Room" color="#3B82F6" defaultOpen={false}>
+      {/* ── 4 & 5. Space Room OR Distance Effect — toggle ── */}
+      <div style={{ background:"#fff", borderRadius:12, border:"1px solid #E2E8F0", padding:"13px 16px" }}>
+        <p style={{ fontSize:11, fontWeight:700, color:"#475569", textTransform:"uppercase", letterSpacing:".05em", fontFamily:"Inter,sans-serif", margin:"0 0 10px" }}>
+          Room / Distance Method — choose one
+        </p>
+        <div style={{ display:"flex", gap:8 }}>
+          {[{value:"spaceRoom",label:"Space Room"},{value:"distanceEffect",label:"Distance Effect"}].map(opt=>(
+            <button key={opt.value} type="button" onClick={()=>setForm(f=>({...f,roomOrDistance:opt.value}))}
+              style={{
+                padding:"7px 18px", borderRadius:8,
+                border:`1.5px solid ${form.roomOrDistance===opt.value?"#3B82F6":"#E2E8F0"}`,
+                background:form.roomOrDistance===opt.value?"#EFF6FF":"#fff",
+                color:form.roomOrDistance===opt.value?"#2563EB":"#64748B",
+                fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"Inter,sans-serif", transition:"all .15s",
+              }}>{opt.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {form.roomOrDistance === "spaceRoom" && <Section icon={Box} title="Space Room" color="#3B82F6" defaultOpen={false}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={g4}>
             <NumInput label="Length"          value={form.room.length_m}   onChange={v=>setRm("length_m",v)}   onLiveChange={v=>setRm("length_m",v)}   unit="m" step={0.5} />
@@ -1239,13 +1437,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
           </div>
           {schultzBandObj ? (
             <div style={{ background:"#EFF6FF", borderRadius:10, padding:"14px", border:"1px solid #BFDBFE" }}>
-              <BandGrid
-                label="Live Schultz Offset per Octave Band (dB)"
-                values={schultzBandObj}
-                onChange={()=>{}}
-                readOnly
-                highlightColor="#3B82F6"
-              />
+              <BandGrid label="Live Schultz Offset per Octave Band (dB)" values={schultzBandObj} onChange={()=>{}} readOnly highlightColor="#3B82F6"/>
             </div>
           ) : (
             <div style={{ fontSize:12.5, color:"#64748B", fontFamily:"Inter,sans-serif", padding:"8px 0" }}>
@@ -1255,14 +1447,50 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </div>
       </Section>}
 
-      {/* ── 5. Receiver ── */}
+      {form.roomOrDistance === "distanceEffect" && <Section icon={Navigation} title="Distance Effect" color="#10B981" defaultOpen={false}>
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          <div style={{ background:"#ECFDF5", borderRadius:10, padding:"12px 14px", border:"1px solid #A7F3D0", fontSize:12.5, color:"#065F46", fontFamily:"Inter,sans-serif" }}>
+            <strong>IL</strong> = 10·log₁₀(Q / 4πr²) &nbsp;&nbsp;
+            where Q = directivity factor, r = distance from source to receiver (m)
+          </div>
+          <div style={g2}>
+            <NumInput label="Distance to Receiver" value={form.distanceEffect.distance_m}  onChange={v=>setDE("distance_m",v)}  onLiveChange={v=>setDE("distance_m",v)}  unit="m" step={0.5} min={0.1} />
+            <SelectInput label="Directivity Q" value={form.distanceEffect.directivity} onChange={v=>setDE("directivity",parseFloat(v))}
+              options={[
+                {value:1, label:"Q=1 (free field / open space 4π)"},
+                {value:2, label:"Q=2 (half space 2π — near wall/ground)"},
+                {value:4, label:"Q=4 (quarter space — corner)"},
+                {value:8, label:"Q=8 (eighth space — tri-corner)"},
+              ]} />
+          </div>
+          {(() => {
+            const deObj = calcDistanceEffect(form.distanceEffect.distance_m, form.distanceEffect.directivity);
+            if (!deObj) return null;
+            const singleVal = deObj[BAND_KEYS[0]];
+            return (
+              <div style={{ background:"#ECFDF5", borderRadius:10, padding:"14px", border:"1px solid #A7F3D0" }}>
+                <p style={{ fontSize:11.5, fontWeight:700, color:"#065F46", fontFamily:"Inter,sans-serif", margin:"0 0 8px" }}>
+                  Distance Correction = {singleVal} dB &nbsp;
+                  <span style={{ fontWeight:400, color:"#047857" }}>(same value for all octave bands — frequency-independent)</span>
+                </p>
+                <BandGrid label="Distance Effect IL (dB)" values={deObj} onChange={()=>{}} readOnly highlightColor="#059669"/>
+              </div>
+            );
+          })()}
+        </div>
+      </Section>}
+
+      {/* ── 6. Receiver ── */}
       <Section icon={MapPin} title="Receiver Location" color="#EF4444">
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          <TextInput label="Receiver Description" value={form.receiver.description} onChange={v=>setRc("description",v)} placeholder="e.g. 3m from exhaust louver at nearest facade" />
-          <div style={g3}>
+          {/* Distance first */}
+          <div style={g2}>
             <NumInput label="Distance to Receiver" value={form.receiver.distance_m} onChange={v=>setRc("distance_m",v)} onLiveChange={v=>setRc("distance_m",v)} unit="m" step={0.5} min={0.5} />
             <SelectInput label="Directivity Q" value={form.receiver.directivity} onChange={v=>setRc("directivity",parseFloat(v))}
               options={[{value:1,label:"Q=1 (free field)"},{value:2,label:"Q=2 (near wall/ground)"},{value:4,label:"Q=4 (corner)"}]} />
+          </div>
+          <div style={g2}>
+            <TextInput label="Receiver Description" value={form.receiver.description} onChange={v=>setRc("description",v)} placeholder="e.g. 3m from exhaust louver at nearest facade" />
             <NumInput label="dB(A) limit" value={form.receiver.required_dba} onChange={v=>setRc("required_dba",v)} unit="dB(A)" step={1} />
           </div>
 
@@ -1295,69 +1523,99 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             )}
           </div>
 
-          {/* Live distance IL preview */}
-          {(() => {
-            const deObj = calcDistanceEffect(form.receiver.distance_m, form.receiver.directivity);
-            if (!deObj) return null;
-            const singleVal = deObj[BAND_KEYS[0]];
+          {/* ── NC Summary Table ── */}
+          {form.receiver.ncNrChoice === "NC" && (() => {
+            const reqNC      = Number(form.receiver.requiredNC) || 50;
+            const reqVals    = getNCCriteria(reqNC);
+            const actualVals = BAND_KEYS.map(k => round1(liveLp[k] ?? 0));
+            const reductionVals = actualVals.map((v,i) => round1(v - reqVals[i]));
+            const ncRating   = calcNCRating(liveLp);
+
             return (
-              <div style={{ background:"#FEF2F2", borderRadius:10, padding:"14px", border:"1px solid #FECACA" }}>
-                <p style={{ fontSize:11.5, fontWeight:700, color:"#991B1B", fontFamily:"Inter,sans-serif", margin:"0 0 8px" }}>
-                  Distance Correction = {singleVal} dB &nbsp;
-                  <span style={{ fontWeight:400, color:"#B91C1C" }}>(frequency-independent)</span>
+              <div style={{ background:"#FFF7ED", borderRadius:12, border:"1px solid #FED7AA", padding:"14px 16px" }}>
+                <p style={{ fontSize:12, fontWeight:700, color:"#C2410C", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                  NC Noise Level Summary
                 </p>
-                <BandGrid
-                  label="Distance Effect IL (dB)"
-                  values={deObj}
-                  onChange={()=>{}}
-                  readOnly
-                  highlightColor="#EF4444"
-                />
+
+                {/* Band header row */}
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ padding:"5px 8px", textAlign:"left", background:"#FEF3C7", border:"1px solid #FDE68A", fontWeight:700, color:"#92400E", whiteSpace:"nowrap", minWidth:160 }}>Description</th>
+                        {BANDS.map(b => (
+                          <th key={b} style={{ padding:"5px 6px", textAlign:"center", background:"#FEF3C7", border:"1px solid #FDE68A", fontWeight:700, color:"#92400E", minWidth:54 }}>{b} Hz</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+
+                      {/* Row 1 — Total Lp at receiver (live) */}
+                      <tr>
+                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #FDE68A", background:"#fff", whiteSpace:"nowrap" }}>
+                          Total Lp at Receiver (dB)
+                        </td>
+                        {actualVals.map((v,i) => (
+                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #FDE68A", background:"#fff", color:"#0F172A", fontWeight:600 }}>
+                            {v}
+                          </td>
+                        ))}
+                      </tr>
+
+                      {/* Row 2 — Required Noise Level from NC table */}
+                      <tr>
+                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #FDE68A", background:"#F0FDF4", whiteSpace:"nowrap" }}>
+                          Required Noise Level: NC {reqNC}
+                        </td>
+                        {reqVals.map((v,i) => (
+                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #FDE68A", background:"#F0FDF4", color:"#166534", fontWeight:600 }}>
+                            {round1(v)}
+                          </td>
+                        ))}
+                      </tr>
+
+                      {/* Row 3 — Additional dB reduction required (highlighted yellow) */}
+                      <tr>
+                        <td style={{ padding:"5px 8px", fontWeight:700, color:"#92400E", border:"1px solid #FDE68A", background:"#FEF08A", whiteSpace:"nowrap" }}>
+                          Additional dB Reduction Required
+                        </td>
+                        {reductionVals ? reductionVals.map((v,i) => (
+                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #FDE68A", background: v > 0 ? "#FEF08A" : "#DCFCE7", color: v > 0 ? "#92400E" : "#166534", fontWeight:700 }}>
+                            {v > 0 ? `+${v}` : v}
+                          </td>
+                        )) : BAND_KEYS.map(k => (
+                          <td key={k} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #FDE68A", background:"#FEF9C3", color:"#A16207" }}>
+                            <span style={{ color:"#94A3B8" }}>—</span>
+                          </td>
+                        ))}
+                      </tr>
+
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* NC Rating badge */}
+                <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                  {ncRating !== null ? (
+                    <span style={{ fontSize:13, fontWeight:700, padding:"4px 14px", borderRadius:99, fontFamily:"Inter,sans-serif",
+                      background: ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#FEE2E2" : "#DCFCE7",
+                      color: ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#991B1B" : "#166534",
+                      border: `1px solid ${ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#FECACA" : "#86EFAC"}`,
+                    }}>
+                      Calculated NC: {ncRating} &nbsp;
+                      {typeof ncRating === "number" && ncRating <= reqNC ? "✓ Within limit" : "✗ Exceeds NC " + reqNC}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize:12, color:"#94A3B8", fontFamily:"Inter,sans-serif", fontStyle:"italic" }}>
+                      Run calculation to see Lp at receiver and dB reduction required
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })()}
         </div>
       </Section>
-
-      {/* ── 6. Distance Effect — hidden for radiated path ── */}
-      {form.noisePath !== "radiated" && <Section icon={Navigation} title="Distance Effect" color="#10B981" defaultOpen={false}>
-        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          <div style={{ background:"#ECFDF5", borderRadius:10, padding:"12px 14px", border:"1px solid #A7F3D0", fontSize:12.5, color:"#065F46", fontFamily:"Inter,sans-serif" }}>
-            <strong>IL</strong> = 10·log₁₀(Q / 4πr²) &nbsp;&nbsp;
-            where Q = directivity factor, r = distance from source to receiver (m)
-          </div>
-          <div style={g2}>
-            <NumInput label="Distance to Receiver" value={form.distanceEffect.distance_m}  onChange={v=>setDE("distance_m",v)}  onLiveChange={v=>setDE("distance_m",v)}  unit="m" step={0.5} min={0.1} />
-            <SelectInput label="Directivity Q" value={form.distanceEffect.directivity} onChange={v=>setDE("directivity",parseFloat(v))}
-              options={[
-                {value:1, label:"Q=1 (free field / open space 4π)"},
-                {value:2, label:"Q=2 (half space 2π — near wall/ground)"},
-                {value:4, label:"Q=4 (quarter space — corner)"},
-                {value:8, label:"Q=8 (eighth space — tri-corner)"},
-              ]} />
-          </div>
-          {(() => {
-            const deObj = calcDistanceEffect(form.distanceEffect.distance_m, form.distanceEffect.directivity);
-            if (!deObj) return null;
-            const singleVal = deObj[BAND_KEYS[0]];
-            return (
-              <div style={{ background:"#ECFDF5", borderRadius:10, padding:"14px", border:"1px solid #A7F3D0" }}>
-                <p style={{ fontSize:11.5, fontWeight:700, color:"#065F46", fontFamily:"Inter,sans-serif", margin:"0 0 8px" }}>
-                  Distance Correction = {singleVal} dB &nbsp;
-                  <span style={{ fontWeight:400, color:"#047857" }}>(same value for all octave bands — frequency-independent)</span>
-                </p>
-                <BandGrid
-                  label="Distance Effect IL (dB)"
-                  values={deObj}
-                  onChange={()=>{}}
-                  readOnly
-                  highlightColor="#059669"
-                />
-              </div>
-            );
-          })()}
-        </div>
-      </Section>}
 
       {/* ── 7. Attenuator ── */}
       <Section icon={Gauge} title="Attenuator / Acoustic Louver" color="#F59E0B" defaultOpen={false}>
