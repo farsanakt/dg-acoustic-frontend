@@ -1052,21 +1052,14 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
               {/* Wall / Door: STC input + auto band lookup */}
               {!isDoor && !isWall ? null : (
                 <>
-                  <div style={{ display:"flex", alignItems:"flex-end", gap:12, flexWrap:"wrap" }}>
-                    <div style={{ maxWidth:220 }}>
-                      <NumInput
-                        label="STC / dB(A) Total"
-                        value={stcVal}
-                        onChange={v=>setTP(stcKey,v)}
-                        onLiveChange={v=>setTP(stcKey,v)}
-                        unit="" step={1}
-                      />
-                    </div>
-                    <span style={{ fontSize:12, fontWeight:700, padding:"5px 13px", borderRadius:99,
-                      background:"#FEF9C3", color:"#92400E", fontFamily:"Inter,sans-serif",
-                      marginBottom:2, border:"1px solid #FDE68A" }}>
-                      → NC {stcNC}
-                    </span>
+                  <div style={{ maxWidth:220 }}>
+                    <NumInput
+                      label="STC / dB(A) Total"
+                      value={stcVal}
+                      onChange={v=>setTP(stcKey,v)}
+                      onLiveChange={v=>setTP(stcKey,v)}
+                      unit="" step={1}
+                    />
                   </div>
                   <p style={{ fontSize:11, color:"#94A3B8", margin:"-8px 0 0", fontFamily:"Inter,sans-serif" }}>
                     Enter the dB(A) total (green column, right table) — band values are looked up automatically.
@@ -1076,7 +1069,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
                   <div style={{ background:bgLight, borderRadius:10, padding:"14px 16px", border:`1px solid ${border}` }}>
                     <p style={{ fontSize:11, fontWeight:700, color:textColor, margin:"0 0 12px",
                       fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
-                      dB(A) Transmission Loss — NC {stcNC}
+                      dB(A) Transmission Loss
                     </p>
                     <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:5 }}>
                       {BANDS.map((b,i) => (
@@ -1097,19 +1090,6 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
               {/* Ceiling: STC input + manual per-band TL input */}
               {(form.noisePath === "through_ceiling_above" || form.noisePath === "through_ceiling_below") && (
                 <>
-                  {/* STC input */}
-                  <div style={{ display:"flex", alignItems:"flex-end", gap:12, flexWrap:"wrap" }}>
-                    <div style={{ maxWidth:220 }}>
-                      <NumInput
-                        label="STC Rating"
-                        value={Number(form.throughPath?.ceiling_stc) || 45}
-                        onChange={v=>setTP("ceiling_stc",v)}
-                        onLiveChange={v=>setTP("ceiling_stc",v)}
-                        unit="" step={1}
-                      />
-                    </div>
-                  </div>
-
                   {/* Manual per-band TL */}
                   <div style={{ background:bgLight, borderRadius:10, padding:"14px 16px", border:`1px solid ${border}` }}>
                     <p style={{ fontSize:11, fontWeight:700, color:textColor, margin:"0 0 4px",
@@ -1431,12 +1411,6 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
       {/* ── 6. Receiver ── */}
       <Section icon={MapPin} title="Receiver Location" color="#EF4444">
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          {/* Distance first */}
-          <div style={g2}>
-            <NumInput label="Distance to Receiver" value={form.receiver.distance_m} onChange={v=>setRc("distance_m",v)} onLiveChange={v=>setRc("distance_m",v)} unit="m" step={0.5} min={0.5} />
-            <SelectInput label="Directivity Q" value={form.receiver.directivity} onChange={v=>setRc("directivity",parseFloat(v))}
-              options={[{value:1,label:"Q=1 (free field)"},{value:2,label:"Q=2 (near wall/ground)"},{value:4,label:"Q=4 (corner)"}]} />
-          </div>
           <div style={g2}>
             <TextInput label="Receiver Description" value={form.receiver.description} onChange={v=>setRc("description",v)} placeholder="e.g. 3m from exhaust louver at nearest facade" />
             <NumInput label="dB(A) limit" value={form.receiver.required_dba} onChange={v=>setRc("required_dba",v)} unit="dB(A)" step={1} />
@@ -1565,8 +1539,8 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </div>
       </Section>
 
-      {/* ── 7. Attenuator ── */}
-      <Section icon={Gauge} title="Attenuator / Acoustic Louver" color="#F59E0B" defaultOpen={false}>
+      {/* ── 7. Attenuator — hidden for through-wall/door/ceiling paths ── */}
+      {!["through_wall","through_door","through_ceiling_above","through_ceiling_below"].includes(form.noisePath) && <Section icon={Gauge} title="Attenuator / Acoustic Louver" color="#F59E0B" defaultOpen={false}>
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
           <div style={g3}>
             <TextInput label="Model" value={form.attenuator.model} onChange={v=>setA("model",v)} placeholder="e.g. A37" />
@@ -1587,7 +1561,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             />
           </div>
         </div>
-      </Section>
+      </Section>}
 
       {/* ── Buttons ── */}
       <div style={{ display:"flex", gap:12, justifyContent:"flex-end", paddingTop:4 }}>
