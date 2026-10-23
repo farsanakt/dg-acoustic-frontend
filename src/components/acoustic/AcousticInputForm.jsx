@@ -292,94 +292,50 @@ function ncCurveBands(val)    { return findRowByDbaTotal(val).left; }
 function getNCForSTC(val)     { return findRowByDbaTotal(val).nc;
 }
 
-// NC Criteria table (right side of PDF) — per-band SPL limit for each NC level
-// Columns: [63, 125, 250, 500, 1000, 2000, 4000, 8000 Hz]
-const NC_CRITERIA = {
-  15:[47.42,20.80,17.00,15.20,14.00,12.10,12.10,27.18],
-  16:[48.22,21.60,20.70,21.20,19.60,18.00,16.20,14.00],
-  17:[49.50,22.88,21.98,22.48,20.88,19.00,17.80,15.60],
-  18:[50.65,24.03,23.13,23.63,22.03,21.04,19.24,17.04],
-  19:[51.26,24.65,23.85,24.29,22.65,21.81,20.01,17.81],
-  20:[51.42,24.80,23.90,24.40,22.80,22.00,20.20,18.00],
-  21:[52.04,25.40,24.70,25.20,23.80,23.00,21.20,18.10],
-  22:[53.03,26.36,25.98,26.48,25.40,24.60,22.80,20.60],
-  23:[53.93,27.22,27.13,27.63,26.84,26.04,24.24,22.04],
-  24:[54.41,27.68,27.85,28.25,27.61,26.81,24.81,22.81],
-  25:[54.53,27.80,27.90,28.40,27.80,27.00,25.20,23.00],
-  26:[55.15,28.40,28.40,28.80,28.60,27.20,25.20,23.20],
-  27:[56.15,29.36,29.98,30.48,29.36,29.08,27.80,26.12],
-  28:[57.05,30.22,31.13,31.63,31.03,30.23,27.85,26.95],
-  29:[57.54,30.68,31.75,32.25,31.65,30.85,30.01,28.77],
-  30:[57.66,30.81,31.80,32.30,31.80,31.00,29.20,28.10],
-  31:[58.29,31.40,32.70,33.20,32.80,32.00,31.20,30.00],
-  32:[59.29,32.36,33.20,33.80,34.40,32.00,31.20,30.00],
-  33:[60.22,33.22,35.13,35.63,35.84,35.04,34.24,33.04],
-  34:[60.71,33.68,35.75,36.25,36.61,35.81,35.01,33.81],
-  35:[60.83,33.80,35.90,36.40,36.80,36.00,35.20,33.10],
-  36:[61.64,34.60,36.70,37.40,37.80,37.00,36.20,35.00],
-  37:[62.93,35.88,37.98,39.00,39.40,38.60,37.80,36.60],
-  38:[64.10,37.03,39.13,40.84,40.84,40.04,39.24,38.04],
-  39:[64.72,37.68,41.21,41.63,40.81,40.81,40.81,38.81],
-  40:[64.88,37.80,39.90,41.40,41.80,41.00,40.20,39.00],
-  41:[65.52,38.40,40.60,42.60,42.60,42.00,41.20,39.00],
-  42:[66.54,39.36,41.98,43.48,43.88,43.60,42.80,41.60],
-  43:[67.47,40.22,43.13,44.63,45.03,45.04,44.24,43.04],
-  44:[67.97,40.68,43.75,45.25,45.65,45.81,45.01,43.81],
-  45:[67.97,40.80,43.90,45.40,45.80,46.00,45.01,43.81],
-  46:[68.90,41.60,44.70,46.80,46.80,47.00,46.20,45.00],
-  47:[70.19,42.88,47.48,47.48,49.84,48.60,47.48,45.70],
-  48:[71.35,44.03,47.13,48.63,49.84,50.04,49.24,48.04],
-  49:[71.97,44.65,47.90,50.61,50.61,50.81,50.01,48.84],
-  50:[72.12,44.80,47.90,49.40,50.80,51.00,50.20,49.00],
-  51:[72.74,45.40,49.46,51.48,52.88,53.60,52.80,51.60],
-  52:[73.73,46.36,49.46,51.48,52.88,53.60,52.80,51.60],
-  53:[74.63,47.22,50.32,52.63,54.03,55.04,54.24,53.04],
-  54:[75.11,47.68,50.90,53.25,54.65,55.81,55.01,53.84],
-  55:[75.23,47.80,50.90,53.40,54.80,56.00,55.20,54.00],
-  56:[75.90,48.40,51.70,54.80,55.80,57.00,55.20,55.00],
-  57:[76.98,49.36,52.98,56.40,57.40,57.80,57.60,56.60],
-  58:[77.97,50.22,53.13,57.44,58.84,58.84,58.04,57.04],
-  59:[78.49,50.68,54.13,57.81,59.61,60.81,59.01,58.81],
-  60:[78.63,50.80,54.75,58.21,59.61,60.81,59.01,58.81],
-  61:[79.31,51.40,55.70,59.20,60.80,62.00,61.20,60.00],
-  62:[80.40,52.36,57.40,60.60,63.40,63.40,62.40,61.40],
-  63:[81.39,53.22,58.13,61.63,63.84,65.04,64.24,63.04],
-  64:[81.39,53.68,58.75,62.23,64.61,65.81,64.61,64.00],
-  65:[82.06,53.80,58.90,62.40,64.80,66.00,65.20,64.00],
-  66:[83.06,54.80,59.90,63.40,65.80,67.00,66.20,65.00],
-  67:[83.46,54.80,60.90,64.40,66.80,68.00,66.20,66.10],
-  68:[84.17,55.80,61.90,65.80,67.80,69.20,67.20,66.10],
-  69:[84.59,55.80,61.90,65.40,68.80,70.00,69.20,68.00],
-  70:[85.59,56.80,62.90,66.40,69.80,71.00,70.20,69.00],
-  71:[86.59,57.80,63.90,67.40,70.80,72.00,71.20,70.00],
-  72:[87.07,57.80,64.90,68.40,71.80,73.00,72.20,71.00],
-  73:[87.75,57.80,64.90,68.40,72.80,74.00,72.20,71.00],
-  74:[88.25,58.80,65.90,69.40,73.80,74.00,73.20,72.00],
-  75:[89.25,59.80,66.90,70.40,74.80,76.00,74.20,73.00],
-  76:[90.25,60.80,67.90,71.40,75.80,75.00,75.00,74.00],
-  77:[90.80,60.80,68.90,72.40,76.80,78.00,75.00,74.00],
-  78:[91.46,61.80,68.90,72.40,77.80,79.00,77.20,76.00],
-  79:[92.04,61.80,68.90,74.40,79.80,80.00,77.20,76.00],
-  80:[93.04,62.80,70.90,74.40,79.80,81.00,80.20,79.00],
-};
-
+// NC Criteria — per-band dB limit for each NC level, taken directly from the LEFT table in the PDF.
+// e.g. NC 30 → [57.00, 48.00, 41.00, 35.00, 31.00, 29.00, 28.00, 27.00]
+// Built from NC_ROWS.left so there is a single source of truth.
+// getNCCriteria — returns the left-table per-band dB values for the nearest NC level.
+// Source: NC_ROWS.left (extracted directly from PDF left table).
+// e.g. NC 30 → [57.00, 48.00, 41.00, 35.00, 31.00, 29.00, 28.00, 27.00]
 function getNCCriteria(nc) {
-  const levels = Object.keys(NC_CRITERIA).map(Number);
-  const closest = levels.reduce((prev,curr) =>
-    Math.abs(curr-nc) < Math.abs(prev-nc) ? curr : prev
-  );
-  return NC_CRITERIA[closest];
+  return findRowByNC(nc).left;
 }
 
-// Determine NC rating of an actual SPL per band: find highest NC curve not exceeded
+// Determine NC rating of an actual SPL per band:
+// Find the lowest NC curve whose left-table values are NOT exceeded by the actual Lp.
 function calcNCRating(lpBand) {
-  const levels = Object.keys(NC_CRITERIA).map(Number).sort((a,b)=>a-b);
-  for (const nc of levels) {
-    const crit = NC_CRITERIA[nc];
-    const exceeded = BAND_KEYS.some((k,i) => (lpBand[k]??0) > crit[i]);
-    if (!exceeded) return nc;
+  const sorted = [...NC_ROWS].sort((a,b) => a.nc - b.nc);
+  for (const row of sorted) {
+    const exceeded = BAND_KEYS.some((k,i) => (lpBand[k]??0) > row.left[i]);
+    if (!exceeded) return row.nc;
   }
   return ">80";
+}
+
+// ── Rockwool Room Volume Correction ───────────────────────────
+// Per-band because αs varies by octave band.
+// S = 2*(L*H) + 2*(W*H) + (L*W)  [ceiling counted, floor excluded]
+// V = L*W*H
+// A = αs * S
+// RT = 0.161 * V / A
+// RVC = (10*log10(V) - 10*log10(RT) - 14) * -1
+// Returns array[8] of RVC values, or null when geometry is missing.
+function calcRockwoolRVC(L, W, H, alphaObj) {
+  const l = Number(L) || 0;
+  const w = Number(W) || 0;
+  const h = Number(H) || 0;
+  if (l <= 0 || w <= 0 || h <= 0) return null;
+  const S = 2*(l*h) + 2*(w*h) + (l*w);
+  const V = l * w * h;
+  return BAND_KEYS.map(k => {
+    const alpha = Number(alphaObj?.[k]) || 0;
+    if (alpha <= 0) return 0;
+    const A  = alpha * S;
+    const RT = 0.161 * V / A;
+    const rvc = (10*Math.log10(V) - 10*Math.log10(RT) - 14) * -1;
+    return Math.round(rvc * 10) / 10;
+  });
 }
 
 // ── Full client-side Lp chain ─────────────────────────────────
@@ -538,6 +494,7 @@ const DEFAULT = {
   erl:        { width_mm:0, height_mm:0 },
   attenuator:     { model:"", width_mm:0, height_mm:0, length_mm:0, pressureDrop_pa:0, il:{ ...EMPTY_BAND } },
   receiver:       { description:"", distance_m:3, directivity:2, requiredNC:65, requiredNR:65, required_dba:65, ncNrChoice:"NC" },
+  // ncNrChoice: "NC" | "NR" | "dBA"
   distanceEffect: { distance_m:3, directivity:1 },
   // Through-wall / door / ceiling path TL inputs (stored to backend)
   throughPath: {
@@ -548,6 +505,12 @@ const DEFAULT = {
     ceiling_label: "",   // free-text: e.g. "150mm Concrete Slab"
     ceiling_stc:   45,   // STC rating (stored to backend / report)
     ceiling_bands: { ...EMPTY_BAND },  // manual per-band TL dB — user types each value
+  },
+  // Rockwool Insulation Loss — standalone section, below Receiver Location
+  rockwool: {
+    type: "",   // free-text: e.g. "100mm Rockwool Flexi Slab 48kg/m³"
+    length_m: 0, width_m: 0, height_m: 0,
+    alpha: { hz63:0.34, hz125:0.35, hz250:0.75, hz500:1.00, hz1000:1.00, hz2000:1.00, hz4000:1.00, hz8000:1.00 },
   },
 };
 
@@ -814,6 +777,10 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
 
   // Live receiver Lp — recomputes on every form change, no backend needed
   const liveLp = useMemo(() => calcLiveReceiverLp(form), [form]);
+
+  // Live NC / NR values — updated on every keystroke (before blur) for instant preview
+  const [liveNCValue, setLiveNCValue] = useState(Number(form.receiver.requiredNC) || 65);
+  const [liveNRValue, setLiveNRValue] = useState(Number(form.receiver.requiredNR) || 65);
 
   // Setters
   const setG = (k,v) => setForm(f => {
@@ -1411,43 +1378,128 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
       {/* ── 6. Receiver ── */}
       <Section icon={MapPin} title="Receiver Location" color="#EF4444">
         <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-          <div style={g2}>
+          <div>
             <TextInput label="Receiver Description" value={form.receiver.description} onChange={v=>setRc("description",v)} placeholder="e.g. 3m from exhaust louver at nearest facade" />
-            <NumInput label="dB(A) limit" value={form.receiver.required_dba} onChange={v=>setRc("required_dba",v)} unit="dB(A)" step={1} />
           </div>
 
-          {/* NC / NR toggle + required value */}
-          <div style={{ display:"flex", alignItems:"flex-end", gap:12, flexWrap:"wrap" }}>
+          {/* ── Rating Curve selector: NC / NR / dB(A) ── */}
+          <div style={{ display:"flex", alignItems:"flex-start", gap:12, flexWrap:"wrap" }}>
             <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-              <label style={{ fontSize:11.5, fontWeight:600, color:"#475569", fontFamily:"Inter,sans-serif" }}>Rating Curve</label>
+              <label style={{ fontSize:11.5, fontWeight:600, color:"#475569", fontFamily:"Inter,sans-serif" }}>Rating Method</label>
               <div style={{ display:"flex", gap:6 }}>
-                {["NC","NR"].map(opt=>(
-                  <button key={opt} type="button" onClick={()=>setRc("ncNrChoice",opt)}
+                {[["NC","NC"],["NR","NR"],["dBA","dB(A) Limit"]].map(([val,label])=>(
+                  <button key={val} type="button" onClick={()=>setRc("ncNrChoice",val)}
                     style={{
-                      padding:"8px 20px", borderRadius:8, fontSize:13, fontWeight:700,
+                      padding:"8px 16px", borderRadius:8, fontSize:12.5, fontWeight:700,
                       fontFamily:"Inter,sans-serif", cursor:"pointer",
-                      border:`1.5px solid ${form.receiver.ncNrChoice===opt?"#EF4444":"#E2E8F0"}`,
-                      background:form.receiver.ncNrChoice===opt?"#FEF2F2":"#fff",
-                      color:form.receiver.ncNrChoice===opt?"#EF4444":"#64748B",
-                      transition:"all .15s",
-                    }}>{opt}</button>
+                      border:`1.5px solid ${form.receiver.ncNrChoice===val?"#EF4444":"#E2E8F0"}`,
+                      background:form.receiver.ncNrChoice===val?"#FEF2F2":"#fff",
+                      color:form.receiver.ncNrChoice===val?"#EF4444":"#64748B",
+                      transition:"all .15s", whiteSpace:"nowrap",
+                    }}>{label}</button>
                 ))}
               </div>
             </div>
-            {form.receiver.ncNrChoice==="NC" ? (
+
+            {/* Value input — changes based on method */}
+            {form.receiver.ncNrChoice==="NC" && (
               <div style={{ flex:1, minWidth:140 }}>
-                <NumInput label="Required NC" value={form.receiver.requiredNC} onChange={v=>setRc("requiredNC",v)} step={5} unit="NC" />
+                <NumInput label="Required NC" value={form.receiver.requiredNC}
+                  onChange={v=>{ setRc("requiredNC",v); setLiveNCValue(v); }}
+                  onLiveChange={v=>setLiveNCValue(v)}
+                  step={1} unit="NC" min={15} />
               </div>
-            ) : (
+            )}
+            {form.receiver.ncNrChoice==="NR" && (
               <div style={{ flex:1, minWidth:140 }}>
-                <NumInput label="Required NR" value={form.receiver.requiredNR} onChange={v=>setRc("requiredNR",v)} step={5} unit="NR" />
+                <NumInput label="Required NR" value={form.receiver.requiredNR}
+                  onChange={v=>{ setRc("requiredNR",v); setLiveNRValue(v); }}
+                  onLiveChange={v=>setLiveNRValue(v)}
+                  step={1} unit="NR" min={0} />
+              </div>
+            )}
+            {form.receiver.ncNrChoice==="dBA" && (
+              <div style={{ flex:1, minWidth:140 }}>
+                <NumInput label="dB(A) Limit" value={form.receiver.required_dba} onChange={v=>setRc("required_dba",v)} onLiveChange={v=>setRc("required_dba",v)} step={1} unit="dB(A)" />
               </div>
             )}
           </div>
 
-          {/* ── NC Summary Table ── */}
+          {/* ── NC live band preview — updates on every keystroke via liveNCValue ── */}
+          {form.receiver.ncNrChoice==="NC" && (() => {
+            const previewNC  = liveNCValue || 50;
+            const previewRow = findRowByNC(previewNC);
+            const previewVals = previewRow.left;
+            return (
+              <div style={{ background:"#F0F9FF", borderRadius:10, border:"1px solid #BAE6FD", padding:"10px 14px" }}>
+                <p style={{ fontSize:11, fontWeight:700, color:"#0369A1", margin:"0 0 8px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                  NC {previewRow.nc} — Per-Band Limit (dB SPL)
+                </p>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ borderCollapse:"collapse", width:"100%", minWidth:480, fontFamily:"Inter,sans-serif", fontSize:11 }}>
+                    <thead>
+                      <tr>
+                        {BANDS.map(b => (
+                          <th key={b} style={{ padding:"4px 6px", textAlign:"center", background:"#E0F2FE", border:"1px solid #BAE6FD", fontWeight:700, color:"#0369A1", minWidth:50 }}>{b} Hz</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        {previewVals.map((v,i) => (
+                          <td key={i} style={{ padding:"4px 6px", textAlign:"center", border:"1px solid #BAE6FD", background:"#fff", color:"#0C4A6E", fontWeight:700, fontSize:12 }}>
+                            {round1(v)}
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── NR live band preview — updates on every keystroke via liveNRValue ── */}
+          {form.receiver.ncNrChoice==="NR" && (() => {
+            const previewNR = liveNRValue || 50;
+            // NR curve formula: NR_band[i] = NRval + NR_offset[i]
+            // NR offsets relative to NR number at each octave band (standard NR curves)
+            // Standard NR formula: Lp(f) = a(f) + b(f) * NR  where a,b per ISO 1996 / NR tables
+            const NR_A = [55.4, 35.5, 22.0, 12.0, 4.8, 0.0, -3.5, -6.1]; // a(f) constants
+            const NR_B = [0.681,0.790,0.870,0.930,0.974,1.000,1.015,1.025]; // b(f) constants
+            const nrVals = NR_A.map((a,i) => round1(a + NR_B[i] * previewNR));
+            return (
+              <div style={{ background:"#F5F3FF", borderRadius:10, border:"1px solid #C4B5FD", padding:"10px 14px" }}>
+                <p style={{ fontSize:11, fontWeight:700, color:"#6D28D9", margin:"0 0 8px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                  NR {previewNR} — Per-Band Limit (dB SPL)
+                </p>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ borderCollapse:"collapse", width:"100%", minWidth:480, fontFamily:"Inter,sans-serif", fontSize:11 }}>
+                    <thead>
+                      <tr>
+                        {BANDS.map(b => (
+                          <th key={b} style={{ padding:"4px 6px", textAlign:"center", background:"#EDE9FE", border:"1px solid #C4B5FD", fontWeight:700, color:"#6D28D9", minWidth:50 }}>{b} Hz</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        {nrVals.map((v,i) => (
+                          <td key={i} style={{ padding:"4px 6px", textAlign:"center", border:"1px solid #C4B5FD", background:"#fff", color:"#4C1D95", fontWeight:700, fontSize:12 }}>
+                            {v}
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Summary Table — NC mode ── */}
           {form.receiver.ncNrChoice === "NC" && (() => {
-            const reqNC      = Number(form.receiver.requiredNC) || 50;
+            const reqNC      = liveNCValue || 50;
             const reqVals    = getNCCriteria(reqNC);
             const actualVals = BAND_KEYS.map(k => round1(liveLp[k] ?? 0));
             const reductionVals = actualVals.map((v,i) => round1(v - reqVals[i]));
@@ -1458,8 +1510,6 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
                 <p style={{ fontSize:12, fontWeight:700, color:"#C2410C", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
                   NC Noise Level Summary
                 </p>
-
-                {/* Band header row */}
                 <div style={{ overflowX:"auto" }}>
                   <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
                     <thead>
@@ -1471,8 +1521,6 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
                       </tr>
                     </thead>
                     <tbody>
-
-                      {/* Row 1 — Total Lp at receiver (live) */}
                       <tr>
                         <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #FDE68A", background:"#fff", whiteSpace:"nowrap" }}>
                           Total Lp at Receiver (dB)
@@ -1483,8 +1531,6 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
                           </td>
                         ))}
                       </tr>
-
-                      {/* Row 2 — Required Noise Level from NC table */}
                       <tr>
                         <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #FDE68A", background:"#F0FDF4", whiteSpace:"nowrap" }}>
                           Required Noise Level: NC {reqNC}
@@ -1495,41 +1541,197 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
                           </td>
                         ))}
                       </tr>
-
-                      {/* Row 3 — Additional dB reduction required (highlighted yellow) */}
                       <tr>
                         <td style={{ padding:"5px 8px", fontWeight:700, color:"#92400E", border:"1px solid #FDE68A", background:"#FEF08A", whiteSpace:"nowrap" }}>
                           Additional dB Reduction Required
                         </td>
-                        {reductionVals ? reductionVals.map((v,i) => (
+                        {reductionVals.map((v,i) => (
                           <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #FDE68A", background: v > 0 ? "#FEF08A" : "#DCFCE7", color: v > 0 ? "#92400E" : "#166534", fontWeight:700 }}>
                             {v > 0 ? `+${v}` : v}
                           </td>
-                        )) : BAND_KEYS.map(k => (
-                          <td key={k} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #FDE68A", background:"#FEF9C3", color:"#A16207" }}>
-                            <span style={{ color:"#94A3B8" }}>—</span>
-                          </td>
                         ))}
                       </tr>
-
                     </tbody>
                   </table>
                 </div>
-
-                {/* NC Rating badge */}
                 <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-                  {ncRating !== null ? (
-                    <span style={{ fontSize:13, fontWeight:700, padding:"4px 14px", borderRadius:99, fontFamily:"Inter,sans-serif",
-                      background: ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#FEE2E2" : "#DCFCE7",
-                      color: ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#991B1B" : "#166534",
-                      border: `1px solid ${ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#FECACA" : "#86EFAC"}`,
-                    }}>
-                      Calculated NC: {ncRating} &nbsp;
-                      {typeof ncRating === "number" && ncRating <= reqNC ? "✓ Within limit" : "✗ Exceeds NC " + reqNC}
-                    </span>
-                  ) : (
-                    <span style={{ fontSize:12, color:"#94A3B8", fontFamily:"Inter,sans-serif", fontStyle:"italic" }}>
-                      Run calculation to see Lp at receiver and dB reduction required
+                  <span style={{ fontSize:13, fontWeight:700, padding:"4px 14px", borderRadius:99, fontFamily:"Inter,sans-serif",
+                    background: ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#FEE2E2" : "#DCFCE7",
+                    color: ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#991B1B" : "#166534",
+                    border: `1px solid ${ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#FECACA" : "#86EFAC"}`,
+                  }}>
+                    Calculated NC: {ncRating} &nbsp;
+                    {typeof ncRating === "number" && ncRating <= reqNC ? "✓ Within limit" : "✗ Exceeds NC " + reqNC}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Summary Table — NR mode ── */}
+          {form.receiver.ncNrChoice === "NR" && (() => {
+            const reqNR = liveNRValue || 50;
+            const NR_A  = [55.4, 35.5, 22.0, 12.0, 4.8, 0.0, -3.5, -6.1];
+            const NR_B  = [0.681,0.790,0.870,0.930,0.974,1.000,1.015,1.025];
+            const reqVals    = NR_A.map((a,i) => round1(a + NR_B[i] * reqNR));
+            const actualVals = BAND_KEYS.map(k => round1(liveLp[k] ?? 0));
+            const reductionVals = actualVals.map((v,i) => round1(v - reqVals[i]));
+            // NR rating: lowest NR curve not exceeded
+            const nrRating = (() => {
+              for (let nr = 0; nr <= 100; nr++) {
+                const curve = NR_A.map((a,i) => a + NR_B[i] * nr);
+                if (!BAND_KEYS.some((k,i) => (liveLp[k]??0) > curve[i])) return nr;
+              }
+              return ">100";
+            })();
+
+            return (
+              <div style={{ background:"#FAF5FF", borderRadius:12, border:"1px solid #E9D5FF", padding:"14px 16px" }}>
+                <p style={{ fontSize:12, fontWeight:700, color:"#6D28D9", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                  NR Noise Level Summary
+                </p>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ padding:"5px 8px", textAlign:"left", background:"#EDE9FE", border:"1px solid #C4B5FD", fontWeight:700, color:"#5B21B6", whiteSpace:"nowrap", minWidth:160 }}>Description</th>
+                        {BANDS.map(b => (
+                          <th key={b} style={{ padding:"5px 6px", textAlign:"center", background:"#EDE9FE", border:"1px solid #C4B5FD", fontWeight:700, color:"#5B21B6", minWidth:54 }}>{b} Hz</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #C4B5FD", background:"#fff", whiteSpace:"nowrap" }}>
+                          Total Lp at Receiver (dB)
+                        </td>
+                        {actualVals.map((v,i) => (
+                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #C4B5FD", background:"#fff", color:"#0F172A", fontWeight:600 }}>
+                            {v}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #C4B5FD", background:"#F0FDF4", whiteSpace:"nowrap" }}>
+                          Required Noise Level: NR {reqNR}
+                        </td>
+                        {reqVals.map((v,i) => (
+                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #C4B5FD", background:"#F0FDF4", color:"#166534", fontWeight:600 }}>
+                            {v}
+                          </td>
+                        ))}
+                      </tr>
+                      <tr>
+                        <td style={{ padding:"5px 8px", fontWeight:700, color:"#5B21B6", border:"1px solid #C4B5FD", background:"#DDD6FE", whiteSpace:"nowrap" }}>
+                          Additional dB Reduction Required
+                        </td>
+                        {reductionVals.map((v,i) => (
+                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #C4B5FD", background: v > 0 ? "#DDD6FE" : "#DCFCE7", color: v > 0 ? "#5B21B6" : "#166534", fontWeight:700 }}>
+                            {v > 0 ? `+${v}` : v}
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ marginTop:10 }}>
+                  <span style={{ fontSize:13, fontWeight:700, padding:"4px 14px", borderRadius:99, fontFamily:"Inter,sans-serif",
+                    background: nrRating === ">100" || (typeof nrRating === "number" && nrRating > reqNR) ? "#FEE2E2" : "#DCFCE7",
+                    color: nrRating === ">100" || (typeof nrRating === "number" && nrRating > reqNR) ? "#991B1B" : "#166534",
+                    border: `1px solid ${nrRating === ">100" || (typeof nrRating === "number" && nrRating > reqNR) ? "#FECACA" : "#86EFAC"}`,
+                  }}>
+                    Calculated NR: {nrRating} &nbsp;
+                    {typeof nrRating === "number" && nrRating <= reqNR ? "✓ Within limit" : "✗ Exceeds NR " + reqNR}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Summary Table — dB(A) Limit mode ── */}
+          {form.receiver.ncNrChoice === "dBA" && (() => {
+            const dbaLimit   = Number(form.receiver.required_dba) || 65;
+            const actualVals = BAND_KEYS.map(k => round1(liveLp[k] ?? 0));
+            // Total dB(A) at receiver: energy sum of per-band Lp values
+            // (each band's A-weighting correction applied, then log-sum)
+            // A-weighting corrections per octave band [63,125,250,500,1k,2k,4k,8k]
+            const A_WT = [-26.2, -16.1, -8.6, -3.2, 0.0, 1.2, 1.0, -1.1];
+            const totalDBA = round1(10 * Math.log10(
+              actualVals.reduce((sum, lp, i) => sum + Math.pow(10, (lp + A_WT[i]) / 10), 0)
+            ));
+            const exceed = totalDBA - dbaLimit;
+
+            return (
+              <div style={{ background:"#FFF1F2", borderRadius:12, border:"1px solid #FECDD3", padding:"14px 16px" }}>
+                <p style={{ fontSize:12, fontWeight:700, color:"#BE123C", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                  dB(A) Limit Summary
+                </p>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ padding:"5px 8px", textAlign:"left", background:"#FFE4E6", border:"1px solid #FECDD3", fontWeight:700, color:"#9F1239", whiteSpace:"nowrap", minWidth:160 }}>Description</th>
+                        {BANDS.map(b => (
+                          <th key={b} style={{ padding:"5px 6px", textAlign:"center", background:"#FFE4E6", border:"1px solid #FECDD3", fontWeight:700, color:"#9F1239", minWidth:54 }}>{b} Hz</th>
+                        ))}
+                        <th style={{ padding:"5px 8px", textAlign:"center", background:"#FFE4E6", border:"1px solid #FECDD3", fontWeight:700, color:"#9F1239", minWidth:70 }}>Total dB(A)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #FECDD3", background:"#fff", whiteSpace:"nowrap" }}>
+                          Total Lp at Receiver (dB)
+                        </td>
+                        {actualVals.map((v,i) => (
+                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #FECDD3", background:"#fff", color:"#0F172A", fontWeight:600 }}>
+                            {v}
+                          </td>
+                        ))}
+                        <td style={{ padding:"5px 8px", textAlign:"center", border:"1px solid #FECDD3", background:"#FFF7ED", color:"#C2410C", fontWeight:800, fontSize:13 }}>
+                          {totalDBA}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #FECDD3", background:"#F0FDF4", whiteSpace:"nowrap" }}>
+                          A-weighting Correction (dB)
+                        </td>
+                        {A_WT.map((v,i) => (
+                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #FECDD3", background:"#F0FDF4", color:"#166534", fontWeight:600 }}>
+                            {v > 0 ? `+${v}` : v}
+                          </td>
+                        ))}
+                        <td style={{ padding:"5px 8px", textAlign:"center", border:"1px solid #FECDD3", background:"#F0FDF4", color:"#64748B", fontStyle:"italic", fontSize:11 }}>
+                          —
+                        </td>
+                      </tr>
+                      <tr>
+                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #FECDD3", background:"#FFF", whiteSpace:"nowrap" }}>
+                          Lp + A-weight (dB(A))
+                        </td>
+                        {actualVals.map((v,i) => (
+                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #FECDD3", background:"#fff", color:"#0F172A", fontWeight:600 }}>
+                            {round1(v + A_WT[i])}
+                          </td>
+                        ))}
+                        <td style={{ padding:"5px 8px", textAlign:"center", border:"1px solid #FECDD3", background:"#fff", color:"#C2410C", fontWeight:700, fontSize:12 }}>
+                          {totalDBA}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ marginTop:12, display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+                  <span style={{ fontSize:13, fontWeight:700, padding:"4px 14px", borderRadius:99, fontFamily:"Inter,sans-serif",
+                    background: exceed > 0 ? "#FEE2E2" : "#DCFCE7",
+                    color: exceed > 0 ? "#991B1B" : "#166534",
+                    border: `1px solid ${exceed > 0 ? "#FECACA" : "#86EFAC"}`,
+                  }}>
+                    Total: {totalDBA} dB(A) &nbsp;
+                    {exceed > 0 ? `✗ Exceeds limit by +${round1(exceed)} dB(A)` : `✓ Within dB(A) limit (${dbaLimit})`}
+                  </span>
+                  {exceed > 0 && (
+                    <span style={{ fontSize:12, color:"#B45309", fontFamily:"Inter,sans-serif", fontWeight:600 }}>
+                      Additional reduction required: +{round1(exceed)} dB(A)
                     </span>
                   )}
                 </div>
@@ -1538,6 +1740,154 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
           })()}
         </div>
       </Section>
+
+      {/* ── Rockwool Insulation Loss — shown for through_wall and through_ceiling_above only ── */}
+      {["through_wall","through_ceiling_above"].includes(form.noisePath) && (() => {
+        const rw       = form.rockwool || {};
+        const rwAlpha  = rw.alpha || {};
+        const rvcValues = calcRockwoolRVC(rw.length_m, rw.width_m, rw.height_m, rwAlpha);
+        const setRW = (field, val) =>
+          setForm(f => ({ ...f, rockwool: { ...f.rockwool, [field]: val } }));
+        const setRWAlpha = (bandKey, val) =>
+          setForm(f => ({ ...f, rockwool: { ...f.rockwool, alpha: { ...f.rockwool.alpha, [bandKey]: val } } }));
+
+        return (
+          <Section icon={Layers} title="Rockwool Insulation Loss" color="#F59E0B" defaultOpen={true}>
+            <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+              {/* Rockwool type — free text */}
+              <div>
+                <p style={{ fontSize:12, fontWeight:700, color:"#334155", fontFamily:"Plus Jakarta Sans,sans-serif", margin:"0 0 6px" }}>
+                  Rockwool Type
+                </p>
+                <input
+                  type="text"
+                  placeholder="e.g. 100mm Rockwool Flexi Slab 48kg/m³"
+                  value={rw.type || ""}
+                  onChange={e => setRW("type", e.target.value)}
+                  style={{
+                    width:"100%", maxWidth:420, padding:"9px 13px", borderRadius:9, fontSize:13.5,
+                    fontFamily:"Inter,sans-serif", border:"1.5px solid #FCD34D",
+                    outline:"none", background:"#FFFDF0", color:"#1E293B", boxSizing:"border-box",
+                    transition:"border .15s",
+                  }}
+                  onFocus={e=>{ e.target.style.borderColor="#F59E0B"; e.target.style.background="#fff"; }}
+                  onBlur={e=>{ e.target.style.borderColor="#FCD34D"; e.target.style.background="#FFFDF0"; }}
+                />
+                <p style={{ fontSize:11, color:"#94A3B8", margin:"5px 0 0", fontFamily:"Inter,sans-serif" }}>
+                  Describe the insulation material — saved to report.
+                </p>
+              </div>
+
+              {/* Generator room dimensions */}
+              <div>
+                <p style={{ fontSize:12, fontWeight:700, color:"#334155", fontFamily:"Plus Jakarta Sans,sans-serif", margin:"0 0 10px" }}>
+                  Generator Room Dimensions
+                </p>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
+                  {[
+                    { label:"Room Length (L)", field:"length_m", unit:"m", placeholder:"e.g. 7.9" },
+                    { label:"Room Width (W)",  field:"width_m",  unit:"m", placeholder:"e.g. 4.8" },
+                    { label:"Height to Ceiling (H)", field:"height_m", unit:"m", placeholder:"e.g. 3.5" },
+                  ].map(({label, field, unit, placeholder}) => (
+                    <div key={field}>
+                      <p style={{ fontSize:11, fontWeight:700, color:"#78350F", margin:"0 0 5px", fontFamily:"Inter,sans-serif" }}>{label}</p>
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          placeholder={placeholder}
+                          value={rw[field] || ""}
+                          onChange={e => setRW(field, e.target.value)}
+                          style={{
+                            flex:1, padding:"9px 11px", borderRadius:8, fontSize:13,
+                            fontFamily:"Inter,sans-serif", border:"1.5px solid #FCD34D",
+                            outline:"none", background:"#FFFDF0", color:"#1E293B",
+                            boxSizing:"border-box",
+                          }}
+                          onFocus={e=>{ e.target.style.borderColor="#F59E0B"; e.target.style.background="#fff"; }}
+                          onBlur={e=>{ e.target.style.borderColor="#FCD34D"; e.target.style.background="#FFFDF0"; }}
+                        />
+                        <span style={{ fontSize:12, color:"#92400E", fontFamily:"Inter,sans-serif", whiteSpace:"nowrap", fontWeight:600 }}>{unit}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Per-band alpha input + RVC result */}
+              <div style={{ background:"#FFFBEB", borderRadius:10, padding:"14px 16px", border:"1px solid #FDE68A" }}>
+                <p style={{ fontSize:11, fontWeight:700, color:"#92400E", margin:"0 0 4px",
+                  fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                  Absorption Coefficient (αs) &amp; Room Volume Correction
+                </p>
+                <p style={{ fontSize:11, color:"#B45309", margin:"0 0 12px", fontFamily:"Inter,sans-serif" }}>
+                  Type αs per octave band (yellow) — Room Volume Correction result appears live (green).
+                </p>
+
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(8,1fr)", gap:6 }}>
+                  {BAND_KEYS.map((k, i) => (
+                    <div key={k} style={{ textAlign:"center" }}>
+                      {/* Band label */}
+                      <div style={{ fontSize:10, fontWeight:700, color:"#78350F",
+                        fontFamily:"Inter,sans-serif", marginBottom:5 }}>
+                        {BANDS[i]} Hz
+                      </div>
+                      {/* αs input — yellow */}
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="1"
+                        value={rwAlpha[k] ?? ""}
+                        onChange={e => setRWAlpha(k, e.target.value)}
+                        style={{
+                          width:"100%", padding:"7px 2px", borderRadius:6, fontSize:12,
+                          fontFamily:"Inter,sans-serif", border:"1.5px solid #FCD34D",
+                          outline:"none", background:"#FEF9C3", color:"#92400E",
+                          textAlign:"center", boxSizing:"border-box", fontWeight:700,
+                        }}
+                        onFocus={e=>{ e.target.style.borderColor="#F59E0B"; e.target.style.background="#fff"; }}
+                        onBlur={e=>{ e.target.style.borderColor="#FCD34D"; e.target.style.background="#FEF9C3"; }}
+                      />
+                      {/* RVC result — green chip */}
+                      <div style={{
+                        marginTop:5, padding:"6px 2px", borderRadius:6, fontSize:12,
+                        fontFamily:"Inter,sans-serif", fontWeight:700, textAlign:"center",
+                        background: rvcValues && rvcValues[i] != null ? "#D1FAE5" : "#F1F5F9",
+                        color:      rvcValues && rvcValues[i] != null ? "#065F46" : "#94A3B8",
+                        border: `1px solid ${rvcValues && rvcValues[i] != null ? "#6EE7B7" : "#E2E8F0"}`,
+                      }}>
+                        {rvcValues && rvcValues[i] != null
+                          ? `${rvcValues[i] > 0 ? "+" : ""}${rvcValues[i]}`
+                          : "—"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Row labels */}
+                <div style={{ display:"flex", justifyContent:"space-between", marginTop:8 }}>
+                  <span style={{ fontSize:10, color:"#92400E", fontFamily:"Inter,sans-serif" }}>
+                    ↑ αs (absorption coefficient)
+                  </span>
+                  <span style={{ fontSize:10, color:"#065F46", fontFamily:"Inter,sans-serif" }}>
+                    ↑ Room Volume Correction (dB)
+                  </span>
+                </div>
+
+                {(!rw.length_m || !rw.width_m || !rw.height_m) && (
+                  <p style={{ fontSize:11, color:"#B45309", margin:"10px 0 0", fontFamily:"Inter,sans-serif", fontStyle:"italic" }}>
+                    Enter room dimensions above to calculate Room Volume Correction.
+                  </p>
+                )}
+              </div>
+
+            </div>
+          </Section>
+        );
+      })()}
 
       {/* ── 7. Attenuator — hidden for through-wall/door/ceiling paths ── */}
       {!["through_wall","through_door","through_ceiling_above","through_ceiling_below"].includes(form.noisePath) && <Section icon={Gauge} title="Attenuator / Acoustic Louver" color="#F59E0B" defaultOpen={false}>
