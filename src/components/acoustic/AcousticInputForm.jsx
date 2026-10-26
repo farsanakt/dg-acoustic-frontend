@@ -1453,10 +1453,10 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             const ncRating   = calcNCRating(rawLpObj);
             // With acoustic treatment:
             //   duct paths  → liveLp (attenuator already subtracted inside calcLiveReceiverLp)
-            //   through paths → actualVals − RVC per band (rockwool insulation loss)
+            //   through paths → actualVals + RVC per band (rockwool insulation loss added)
             const hasTreatment = isRockwoolPath ? hasRockwool : hasAtt;
             const treatedVals  = isRockwoolPath
-              ? BAND_KEYS.map((k,i) => round1(actualVals[i] - rvcArr[i]))
+              ? BAND_KEYS.map((k,i) => round1(actualVals[i] + rvcArr[i]))
               : BAND_KEYS.map(k => round1(liveLp[k] ?? 0));
             const treatedLpObj = Object.fromEntries(BAND_KEYS.map((k,i) => [k, treatedVals[i]]));
             const ncRatingTreated = hasTreatment ? calcNCRating(treatedLpObj) : null;
@@ -1571,10 +1571,10 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             const nrRating   = calcNRRating(rawLpObj);
             // With acoustic treatment:
             //   duct paths  → liveLp (attenuator already subtracted inside calcLiveReceiverLp)
-            //   through paths → actualVals − RVC per band (rockwool insulation loss)
+            //   through paths → actualVals + RVC per band (rockwool insulation loss added)
             const hasTreatment = isRockwoolPath ? hasRockwool : hasAtt;
             const treatedVals  = isRockwoolPath
-              ? BAND_KEYS.map((k,i) => round1(actualVals[i] - rvcArr[i]))
+              ? BAND_KEYS.map((k,i) => round1(actualVals[i] + rvcArr[i]))
               : BAND_KEYS.map(k => round1(liveLp[k] ?? 0));
             const treatedLpObj = Object.fromEntries(BAND_KEYS.map((k,i) => [k, treatedVals[i]]));
             const nrRatingTreated = hasTreatment ? calcNRRating(treatedLpObj) : null;
@@ -1665,10 +1665,10 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             const exceed     = totalDBA - dbaLimit;
             // With acoustic treatment:
             //   duct paths  → liveLp (attenuator already subtracted inside calcLiveReceiverLp)
-            //   through paths → actualVals − RVC per band (rockwool insulation loss)
+            //   through paths → actualVals + RVC per band (rockwool insulation loss added)
             const hasTreatment = isRockwoolPath ? hasRockwool : hasAtt;
             const treatedVals     = isRockwoolPath
-              ? BAND_KEYS.map((k,i) => round1(actualVals[i] - rvcArr[i]))
+              ? BAND_KEYS.map((k,i) => round1(actualVals[i] + rvcArr[i]))
               : BAND_KEYS.map(k => round1(liveLp[k] ?? 0));
             const totalDBATreated = hasTreatment ? calcTotalDBA(treatedVals) : null;
             const exceedTreated   = hasTreatment ? round1(totalDBATreated - dbaLimit) : null;
