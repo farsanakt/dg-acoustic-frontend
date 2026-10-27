@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Zap, Box, Wind, Gauge, MapPin, Waves, Navigation,
   ChevronDown, ChevronUp, Loader2, Calculator,
-  Info, Plus, Trash2, Layers,
+  Info, Plus, Trash2, Layers, Download, FileText, FileIcon,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { createCalculationApi, updateCalculationApi, runCalculationApi } from "@/api/calculationApi";
@@ -26,6 +26,8 @@ const NOISE_INPUT_TYPES = [
 const DISTANCE_MODES = ["spl_db","spl_dba"];
 
 function round1(n) { return Math.round(n * 10) / 10; }
+// Display helper: show 2 decimal places for visual output only
+function fmt2(n) { return (Math.round(n * 100) / 100).toFixed(2); }
 
 function computeSWLFromRaw(noiseInputType, rawBand, distance_m) {
   const r = distance_m > 0 ? distance_m : 1;
@@ -747,7 +749,696 @@ function Section({ icon:Icon, title, color="#0E9F8E", badge, children, defaultOp
 }
 
 /* ═══════════════════════════════════════════════════════════ */
-export default function AcousticInputForm({ projectId, existing, onSaved, onResults }) {
+/* ── Download helpers ────────────────────────────────────── */
+const NOISE_PATH_LABEL = {
+  exhaust:"Exhaust Air", intake:"Intake Air",
+  through_wall:"Through Wall", through_door:"Through Door",
+  through_ceiling_above:"Through Ceiling Above", through_ceiling_below:"Through Ceiling Below",
+};
+
+function buildReportSections(form, liveLp) {
+  const NR_A = [55.4,35.5,22.0,12.0,4.8,0.0,-3.5,-6.1];
+  const NR_B = [0.681,0.790,0.870,0.930,0.974,1.000,1.015,1.025];
+  const A_WT = [-26.2,-16.1,-8.6,-3.2,0.0,1.2,1.0,-1.1];
+  const isRockwoolPath = ["through_wall","through_ceiling_above"].includes(form.noisePath);
+  const rw = form.rockwool || {};
+  const rvcArr = isRockwoolPath
+    ? (calcRockwoolRVC(rw.length_m,rw.width_m,rw.height_m,rw.alpha||{}) || BAND_KEYS.map(()=>0))
+    : BAND_KEYS.map(()=>0);
+  const attIL = BAND_KEYS.map(k => Number(form.attenuator.il?.[k])||0);
+  const actualVals = BAND_KEYS.map((k,i) => (liveLp[k]??0) + attIL[i]);
+  const hasTreatment = isRockwoolPath
+    ? rvcArr.some(v=>v!==0)
+    : attIL.some(v=>v>0);
+  const treatedVals = isRockwoolPath
+    ? BAND_KEYS.map((_,i) => actualVals[i] + rvcArr[i])
+    : BAND_KEYS.map(k => liveLp[k]??0);
+
+  const ncMode = form.receiver.ncNrChoice === "NC";
+  const nrMode = form.receiver.ncNrChoice === "NR";
+  const dbaMode = form.receiver.ncNrChoice === "dBA";
+
+  const bandHeader = ["Description",...BANDS.map(b=>`${b} Hz`)];
+  const bandHeaderTreated = ["Description",...BANDS.map(b=>`${b} Hz`)];
+
+  // NC
+  let ncSection = null;
+  if (ncMode) {
+    const reqNC = Number(form.receiver.requiredNC)||50;
+    const reqVals = getNCCriteria(reqNC);
+    const reductionVals = actualVals.map((v,i)=>v-reqVals[i]);
+    const rawLpObj = Object.fromEntries(BAND_KEYS.map((k,i)=>[k,actualVals[i]]));
+    const ncRating = calcNCRating(rawLpObj);
+    const treatedLpObj = Object.fromEntries(BAND_KEYS.map((k,i)=>[k,treatedVals[i]]));
+    const ncRatingTreated = hasTreatment ? calcNCRating(treatedLpObj) : null;
+    const treatedReduction = treatedVals.map((v,i)=>v-reqVals[i]);
+    ncSection = {
+      title:"NC Noise Level Summary",
+      bandHeader,
+      rows:[
+        ["Total Lp at Receiver (dB)",...actualVals.map(v=>fmt2(v))],
+        [`Required Noise Level: NC ${reqNC}`,...reqVals.map(v=>fmt2(v))],
+        ["Additional dB Reduction Required",...reductionVals.map(v=>v>0?`+${fmt2(v)}`:0)],
+      ],
+      badge:`Without Treatment — Calculated NC: ${ncRating} ${typeof ncRating==="number"&&ncRating<=reqNC?"✓ Within limit":"✗ Exceeds NC "+reqNC}`,
+      treatment: hasTreatment ? {
+        title:"With Acoustic Treatment — NC Summary",
+        rows:[
+          ["With Acoustic Treatment (dB)",...treatedVals.map(v=>fmt2(v))],
+          [`Required Noise Level: NC ${reqNC}`,...reqVals.map(v=>fmt2(v))],
+          ["Additional dB Reduction Required",...treatedReduction.map(v=>v>0?`+${fmt2(v)}`:0)],
+        ],
+        badge:`With Acoustic Treatment — Calculated NC: ${ncRatingTreated} ${typeof ncRatingTreated==="number"&&ncRatingTreated<=reqNC?"✓ Within limit":"✗ Exceeds NC "+reqNC}`,
+      } : null,
+    };
+  }
+
+  // NR
+  let nrSection = null;
+  if (nrMode) {
+    const reqNR = Number(form.receiver.requiredNR)||50;
+    const reqVals = NR_A.map((a,i)=>a+NR_B[i]*reqNR);
+    const reductionVals = actualVals.map((v,i)=>v-reqVals[i]);
+    const calcNRR = (obj) => { for(let n=0;n<=100;n++){const c=NR_A.map((a,i)=>a+NR_B[i]*n);if(!BAND_KEYS.some((k,i)=>(obj[k]??0)>c[i]))return n;}return ">100"; };
+    const nrRating = calcNRR(Object.fromEntries(BAND_KEYS.map((k,i)=>[k,actualVals[i]])));
+    const nrRatingTreated = hasTreatment ? calcNRR(Object.fromEntries(BAND_KEYS.map((k,i)=>[k,treatedVals[i]]))) : null;
+    const treatedReduction = treatedVals.map((v,i)=>v-reqVals[i]);
+    nrSection = {
+      title:"NR Noise Level Summary",
+      bandHeader,
+      rows:[
+        ["Total Lp at Receiver (dB)",...actualVals.map(v=>fmt2(v))],
+        [`Required Noise Level: NR ${reqNR}`,...reqVals.map(v=>fmt2(v))],
+        ["Additional dB Reduction Required",...reductionVals.map(v=>v>0?`+${fmt2(v)}`:0)],
+      ],
+      badge:`Without Treatment — Calculated NR: ${nrRating} ${typeof nrRating==="number"&&nrRating<=reqNR?"✓ Within limit":"✗ Exceeds NR "+reqNR}`,
+      treatment: hasTreatment ? {
+        title:"With Acoustic Treatment — NR Summary",
+        rows:[
+          ["With Acoustic Treatment (dB)",...treatedVals.map(v=>fmt2(v))],
+          [`Required Noise Level: NR ${reqNR}`,...reqVals.map(v=>fmt2(v))],
+          ["Additional dB Reduction Required",...treatedReduction.map(v=>v>0?`+${fmt2(v)}`:0)],
+        ],
+        badge:`With Acoustic Treatment — Calculated NR: ${nrRatingTreated} ${typeof nrRatingTreated==="number"&&nrRatingTreated<=reqNR?"✓ Within limit":"✗ Exceeds NR "+reqNR}`,
+      } : null,
+    };
+  }
+
+  // dB(A)
+  let dbaSection = null;
+  if (dbaMode) {
+    const dbaLimit = Number(form.receiver.required_dba)||65;
+    const calcTotalDBA = (vals) => 10*Math.log10(vals.reduce((s,lp,i)=>s+Math.pow(10,(lp+A_WT[i])/10),0));
+    const totalDBA = calcTotalDBA(actualVals);
+    const exceed = totalDBA - dbaLimit;
+    const totalDBATreated = hasTreatment ? calcTotalDBA(treatedVals) : null;
+    const exceedTreated = hasTreatment ? totalDBATreated - dbaLimit : null;
+    dbaSection = {
+      title:"dB(A) Limit Summary",
+      bandHeader:[...bandHeader,"Total dB(A)"],
+      rows:[
+        ["Total Lp at Receiver (dB)",...actualVals.map(v=>fmt2(v)),fmt2(totalDBA)],
+        ["A-weighting Correction (dB)",...A_WT.map(v=>v>0?`+${v}`:String(v)),"—"],
+        ["Lp + A-weight (dB(A))",...actualVals.map((v,i)=>fmt2(v+A_WT[i])),fmt2(totalDBA)],
+      ],
+      badge:`Without Treatment — Total: ${fmt2(totalDBA)} dB(A) ${exceed>0?`✗ Exceeds limit by +${fmt2(exceed)} dB(A)`:`✓ Within dB(A) limit (${dbaLimit})`}`,
+      treatment: hasTreatment&&totalDBATreated!==null ? {
+        title:"With Acoustic Treatment — dB(A) Summary",
+        rows:[
+          ["With Acoustic Treatment (dB)",...treatedVals.map(v=>fmt2(v)),fmt2(totalDBATreated)],
+          ["A-weighting Correction (dB)",...A_WT.map(v=>v>0?`+${v}`:String(v)),"—"],
+          ["Lp + A-weight (dB(A))",...treatedVals.map((v,i)=>fmt2(v+A_WT[i])),fmt2(totalDBATreated)],
+        ],
+        badge:`With Acoustic Treatment — Total: ${fmt2(totalDBATreated)} dB(A) ${exceedTreated>0?`✗ Exceeds limit by +${fmt2(exceedTreated)} dB(A)`:`✓ Within dB(A) limit (${dbaLimit})`}`,
+      } : null,
+    };
+  }
+
+  return { actualVals, treatedVals, hasTreatment, rvcArr, attIL, ncSection, nrSection, dbaSection };
+}
+
+async function downloadPDF(form, liveLp, project) {
+  const { default: jsPDF } = await import("jspdf");
+  const { default: autoTable } = await import("jspdf-autotable");
+  const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+  const pw = doc.internal.pageSize.getWidth();
+  const margin = 15;
+  let y = margin;
+
+  const addPage = () => { doc.addPage(); y = margin; };
+  const checkY = (needed=20) => { if (y + needed > doc.internal.pageSize.getHeight()-15) addPage(); };
+
+  // ── Header ──
+  doc.setFillColor(14,159,142);
+  doc.rect(0,0,pw,28,"F");
+  doc.setTextColor(255,255,255);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(15);
+  doc.text("DG Acoustic Calculation Report",margin,12);
+  doc.setFontSize(9);
+  doc.setFont("helvetica","normal");
+  doc.text("AAPL Consultants  |  DG-SARIA",margin,20);
+  doc.text(`Generated: ${new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"})}`,pw-margin,20,{align:"right"});
+  y = 36;
+
+  // ── Project Info ──
+  doc.setTextColor(15,23,42);
+  doc.setFont("helvetica","bold");
+  doc.setFontSize(10);
+  doc.text("Project Information",margin,y); y+=6;
+  doc.setDrawColor(14,159,142); doc.setLineWidth(0.4);
+  doc.line(margin,y,pw-margin,y); y+=5;
+
+  const projRows = [
+    ["Project Name", project?.projectName||"—"],
+    ["Client / Owner", project?.clientName||"—"],
+    ["Contractor", project?.contractorName||"—"],
+    ["Location", project?.location||"—"],
+    ["Prepared By", project?.preparedBy||"—"],
+    ["Checked By", project?.checkedBy||"—"],
+    ["Revision", project?.revision||"00"],
+    ["Date", project?.date || new Date().toLocaleDateString("en-GB")],
+  ];
+  autoTable(doc,{
+    startY:y, margin:{left:margin,right:margin},
+    head:[["Field","Details"]],
+    body: projRows,
+    styles:{fontSize:8.5,cellPadding:2.5},
+    headStyles:{fillColor:[14,159,142],textColor:255,fontStyle:"bold"},
+    columnStyles:{0:{fontStyle:"bold",cellWidth:50},1:{cellWidth:"auto"}},
+    theme:"grid",
+  });
+  y = doc.lastAutoTable.finalY + 8;
+
+  // ── Equipment / Generator ──
+  checkY(30);
+  doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(15,23,42);
+  doc.text("Equipment Details",margin,y); y+=6;
+  doc.setDrawColor(14,159,142); doc.line(margin,y,pw-margin,y); y+=5;
+  const eqRows = [
+    ["Equipment ID", form.generator.equipmentId||"—"],
+    ["Model Number", form.generator.modelNumber||"—"],
+    ["Rated kVA", form.generator.ratedKva||"—"],
+    ["Building Ref", form.generator.buildingRef||"—"],
+    ["Overall SWL", `${form.generator.swl_dba||"—"} dB(A)`],
+    ["Noise Input Type", form.generator.noiseInputType||"—"],
+    ["Noise Path", NOISE_PATH_LABEL[form.noisePath]||form.noisePath],
+    ["Receiver Description", form.receiver.description||"—"],
+    ["Noise Criterion", form.receiver.ncNrChoice],
+    ["Required Level",
+      form.receiver.ncNrChoice==="NC" ? `NC ${form.receiver.requiredNC}` :
+      form.receiver.ncNrChoice==="NR" ? `NR ${form.receiver.requiredNR}` :
+      `${form.receiver.required_dba} dB(A)`],
+  ];
+  autoTable(doc,{
+    startY:y, margin:{left:margin,right:margin},
+    head:[["Parameter","Value"]],
+    body:eqRows,
+    styles:{fontSize:8.5,cellPadding:2.5},
+    headStyles:{fillColor:[14,159,142],textColor:255,fontStyle:"bold"},
+    columnStyles:{0:{fontStyle:"bold",cellWidth:70}},
+    theme:"grid",
+  });
+  y = doc.lastAutoTable.finalY + 8;
+
+  // ── SWL per band ──
+  checkY(30);
+  doc.setFont("helvetica","bold"); doc.setFontSize(10);
+  doc.text("Sound Power Level (SWL) per Octave Band",margin,y); y+=6;
+  doc.setDrawColor(14,159,142); doc.line(margin,y,pw-margin,y); y+=5;
+  autoTable(doc,{
+    startY:y, margin:{left:margin,right:margin},
+    head:[["Band (Hz)",...BANDS.map(String)]],
+    body:[["SWL (dB)",...BAND_KEYS.map(k=>fmt2(Number(form.generator.swl?.[k])||0))]],
+    styles:{fontSize:8,cellPadding:2,halign:"center"},
+    headStyles:{fillColor:[71,85,105],textColor:255,fontStyle:"bold"},
+    theme:"grid",
+  });
+  y = doc.lastAutoTable.finalY + 8;
+
+  // ── Duct details (if duct path) ──
+  const isDuctPath = ["exhaust","intake"].includes(form.noisePath);
+  if (isDuctPath && form.ducts?.length) {
+    checkY(30);
+    doc.setFont("helvetica","bold"); doc.setFontSize(10);
+    doc.text("Duct Details",margin,y); y+=6;
+    doc.setDrawColor(14,159,142); doc.line(margin,y,pw-margin,y); y+=5;
+    form.ducts.forEach((d,idx) => {
+      checkY(20);
+      autoTable(doc,{
+        startY:y, margin:{left:margin,right:margin},
+        head:[[`Duct ${idx+1}: ${d.label||""}  |  ${d.lining==="lined"?"Lined":"Unlined"}  |  Elbows: ${d.elbows||0}`]],
+        body:[
+          ["Width (mm)", d.width_mm||0, "Height (mm)", d.height_mm||0],
+          ["Length (m)", d.length_m||0, "Lining Thickness (in)", d.liningThickness_in||0],
+        ],
+        styles:{fontSize:8,cellPadding:2},
+        headStyles:{fillColor:[100,116,139],textColor:255,fontStyle:"bold"},
+        theme:"grid",
+      });
+      y = doc.lastAutoTable.finalY + 4;
+    });
+    y += 4;
+  }
+
+  // ── Through-path TL ──
+  if (!isDuctPath) {
+    checkY(25);
+    doc.setFont("helvetica","bold"); doc.setFontSize(10);
+    doc.text("Transmission Loss Details",margin,y); y+=6;
+    doc.setDrawColor(14,159,142); doc.line(margin,y,pw-margin,y); y+=5;
+    const tp = form.throughPath||{};
+    const tlRows = [];
+    if (form.noisePath==="through_wall") tlRows.push(["Wall Construction",tp.wall_label||"—"],["Wall STC",tp.wall_stc||"—"]);
+    if (form.noisePath==="through_door") tlRows.push(["Door Construction",tp.door_label||"—"],["Door STC",tp.door_stc||"—"]);
+    if (["through_ceiling_above","through_ceiling_below"].includes(form.noisePath)) {
+      tlRows.push(["Ceiling Construction",tp.ceiling_label||"—"],["Ceiling STC",tp.ceiling_stc||"—"]);
+    }
+    autoTable(doc,{
+      startY:y, margin:{left:margin,right:margin},
+      head:[["Parameter","Value"]],
+      body:tlRows,
+      styles:{fontSize:8.5,cellPadding:2.5},
+      headStyles:{fillColor:[14,159,142],textColor:255,fontStyle:"bold"},
+      columnStyles:{0:{fontStyle:"bold",cellWidth:70}},
+      theme:"grid",
+    });
+    y = doc.lastAutoTable.finalY + 8;
+
+    // Per-band TL for ceiling
+    if (["through_ceiling_above","through_ceiling_below"].includes(form.noisePath) && tp.ceiling_bands) {
+      checkY(20);
+      autoTable(doc,{
+        startY:y, margin:{left:margin,right:margin},
+        head:[["Band (Hz)",...BANDS.map(String)]],
+        body:[["TL (dB)",...BAND_KEYS.map(k=>fmt2(Number(tp.ceiling_bands?.[k])||0))]],
+        styles:{fontSize:8,cellPadding:2,halign:"center"},
+        headStyles:{fillColor:[71,85,105],textColor:255,fontStyle:"bold"},
+        theme:"grid",
+      });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+  }
+
+  // ── Attenuator ──
+  if (!["through_wall","through_door","through_ceiling_above","through_ceiling_below"].includes(form.noisePath)) {
+    const attILVals = BAND_KEYS.map(k=>Number(form.attenuator.il?.[k])||0);
+    if (form.attenuator.model || attILVals.some(v=>v>0)) {
+      checkY(30);
+      doc.setFont("helvetica","bold"); doc.setFontSize(10);
+      doc.text("Attenuator / Acoustic Louver",margin,y); y+=6;
+      doc.setDrawColor(14,159,142); doc.line(margin,y,pw-margin,y); y+=5;
+      autoTable(doc,{
+        startY:y, margin:{left:margin,right:margin},
+        head:[["Model","Width (mm)","Height (mm)","Length (mm)","Pressure Drop (Pa)"]],
+        body:[[form.attenuator.model||"—",form.attenuator.width_mm||0,form.attenuator.height_mm||0,form.attenuator.length_mm||0,form.attenuator.pressureDrop_pa||0]],
+        styles:{fontSize:8,cellPadding:2,halign:"center"},
+        headStyles:{fillColor:[14,159,142],textColor:255,fontStyle:"bold"},
+        theme:"grid",
+      });
+      y = doc.lastAutoTable.finalY + 4;
+      autoTable(doc,{
+        startY:y, margin:{left:margin,right:margin},
+        head:[["Band (Hz)",...BANDS.map(String)]],
+        body:[["Insertion Loss (dB)",...attILVals.map(v=>fmt2(v))]],
+        styles:{fontSize:8,cellPadding:2,halign:"center"},
+        headStyles:{fillColor:[71,85,105],textColor:255,fontStyle:"bold"},
+        theme:"grid",
+      });
+      y = doc.lastAutoTable.finalY + 8;
+    }
+  }
+
+  // ── Rockwool (through paths) ──
+  if (["through_wall","through_ceiling_above"].includes(form.noisePath)) {
+    const rw = form.rockwool||{};
+    const rvcArr = calcRockwoolRVC(rw.length_m,rw.width_m,rw.height_m,rw.alpha||{});
+    checkY(30);
+    doc.setFont("helvetica","bold"); doc.setFontSize(10);
+    doc.text("Rockwool Insulation Loss",margin,y); y+=6;
+    doc.setDrawColor(14,159,142); doc.line(margin,y,pw-margin,y); y+=5;
+    autoTable(doc,{
+      startY:y, margin:{left:margin,right:margin},
+      head:[["Parameter","Value"]],
+      body:[
+        ["Rockwool Type",rw.type||"—"],
+        ["Room Length (m)",rw.length_m||0],
+        ["Room Width (m)",rw.width_m||0],
+        ["Room Height (m)",rw.height_m||0],
+      ],
+      styles:{fontSize:8.5,cellPadding:2.5},
+      headStyles:{fillColor:[245,158,11],textColor:255,fontStyle:"bold"},
+      columnStyles:{0:{fontStyle:"bold",cellWidth:70}},
+      theme:"grid",
+    });
+    y = doc.lastAutoTable.finalY + 4;
+    const alpha = rw.alpha||{};
+    autoTable(doc,{
+      startY:y, margin:{left:margin,right:margin},
+      head:[["Band (Hz)",...BANDS.map(String)]],
+      body:[
+        ["Absorption Coeff (αs)",...BAND_KEYS.map(k=>alpha[k]||0)],
+        ["Room Vol Correction (dB)",...(rvcArr||BAND_KEYS.map(()=>0)).map(v=>fmt2(v))],
+      ],
+      styles:{fontSize:8,cellPadding:2,halign:"center"},
+      headStyles:{fillColor:[245,158,11],textColor:255,fontStyle:"bold"},
+      theme:"grid",
+    });
+    y = doc.lastAutoTable.finalY + 8;
+  }
+
+  // ── Receiver Lp per band ──
+  checkY(25);
+  doc.setFont("helvetica","bold"); doc.setFontSize(10);
+  doc.text("Total Lp at Receiver per Octave Band",margin,y); y+=6;
+  doc.setDrawColor(14,159,142); doc.line(margin,y,pw-margin,y); y+=5;
+  const { actualVals, treatedVals, hasTreatment, ncSection, nrSection, dbaSection } = buildReportSections(form, liveLp);
+  autoTable(doc,{
+    startY:y, margin:{left:margin,right:margin},
+    head:[["Band (Hz)",...BANDS.map(String)]],
+    body:[["Lp (dB)",...actualVals.map(v=>fmt2(v))]],
+    styles:{fontSize:8,cellPadding:2,halign:"center"},
+    headStyles:{fillColor:[14,159,142],textColor:255,fontStyle:"bold"},
+    theme:"grid",
+  });
+  y = doc.lastAutoTable.finalY + 8;
+
+  // ── Summary tables ──
+  const renderSection = (sec) => {
+    if (!sec) return;
+    checkY(35);
+    doc.setFont("helvetica","bold"); doc.setFontSize(10);
+    doc.text(sec.title,margin,y); y+=6;
+    doc.setDrawColor(14,159,142); doc.line(margin,y,pw-margin,y); y+=5;
+    autoTable(doc,{
+      startY:y, margin:{left:margin,right:margin},
+      head:[sec.bandHeader],
+      body:sec.rows,
+      styles:{fontSize:7.5,cellPadding:2,halign:"center"},
+      headStyles:{fillColor:[71,85,105],textColor:255,fontStyle:"bold"},
+      columnStyles:{0:{halign:"left",cellWidth:52,fontStyle:"bold"}},
+      theme:"grid",
+    });
+    y = doc.lastAutoTable.finalY + 4;
+    if (sec.badge) {
+      checkY(8);
+      doc.setFont("helvetica","italic"); doc.setFontSize(8.5); doc.setTextColor(71,85,105);
+      doc.text(sec.badge,margin,y); y+=8;
+    }
+    if (sec.treatment) {
+      checkY(35);
+      doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(29,78,216);
+      doc.text(sec.treatment.title,margin,y); y+=6;
+      doc.setDrawColor(29,78,216); doc.line(margin,y,pw-margin,y); y+=5;
+      autoTable(doc,{
+        startY:y, margin:{left:margin,right:margin},
+        head:[sec.bandHeader],
+        body:sec.treatment.rows,
+        styles:{fontSize:7.5,cellPadding:2,halign:"center"},
+        headStyles:{fillColor:[29,78,216],textColor:255,fontStyle:"bold"},
+        columnStyles:{0:{halign:"left",cellWidth:52,fontStyle:"bold"}},
+        theme:"grid",
+      });
+      y = doc.lastAutoTable.finalY + 4;
+      if (sec.treatment.badge) {
+        checkY(8);
+        doc.setFont("helvetica","italic"); doc.setFontSize(8.5); doc.setTextColor(29,78,216);
+        doc.text(sec.treatment.badge,margin,y); y+=8;
+      }
+    }
+    doc.setTextColor(15,23,42);
+  };
+
+  renderSection(ncSection);
+  renderSection(nrSection);
+  renderSection(dbaSection);
+
+  // ── Footer on every page ──
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i=1;i<=pageCount;i++) {
+    doc.setPage(i);
+    doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(148,163,184);
+    doc.text(`AAPL Consultants  |  DG-SARIA Acoustic Report  |  Rev ${project?.revision||"00"}  |  Page ${i} of ${pageCount}`,pw/2,doc.internal.pageSize.getHeight()-8,{align:"center"});
+  }
+
+  doc.save(`DG_Acoustic_Report_${(project?.projectName||"Report").replace(/\s+/g,"_")}_Rev${project?.revision||"00"}.pdf`);
+}
+
+async function downloadWord(form, liveLp, project) {
+  const { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, AlignmentType, BorderStyle, WidthType, ShadingType } = await import("docx");
+
+  const hdrRun = (text) => new TextRun({ text, bold:true, color:"FFFFFF", size:22, font:"Calibri" });
+  const boldRun = (text) => new TextRun({ text, bold:true, size:20, font:"Calibri" });
+  const normalRun = (text) => new TextRun({ text, size:20, font:"Calibri" });
+  const heading = (text,level=2) => new Paragraph({ text, heading: level===1?HeadingLevel.HEADING_1:HeadingLevel.HEADING_2, spacing:{before:200,after:100} });
+  const spacer = () => new Paragraph({ text:"", spacing:{before:60,after:60} });
+
+  const tealShade = { type:ShadingType.SOLID, color:"0E9F8E", fill:"0E9F8E" };
+  const grayShade = { type:ShadingType.SOLID, color:"475569", fill:"475569" };
+  const blueShade = { type:ShadingType.SOLID, color:"1D4ED8", fill:"1D4ED8" };
+  const lightShade = (color) => ({ type:ShadingType.SOLID, color, fill:color });
+
+  const mkCell = (text, opts={}) => new TableCell({
+    children:[new Paragraph({ children:[new TextRun({ text:String(text), bold:opts.bold||false, color:opts.color||"000000", size:18, font:"Calibri" })], alignment:opts.center?AlignmentType.CENTER:AlignmentType.LEFT })],
+    shading: opts.shading||undefined,
+    borders: { top:{style:BorderStyle.SINGLE,size:1,color:"E2E8F0"}, bottom:{style:BorderStyle.SINGLE,size:1,color:"E2E8F0"}, left:{style:BorderStyle.SINGLE,size:1,color:"E2E8F0"}, right:{style:BorderStyle.SINGLE,size:1,color:"E2E8F0"} },
+    width: opts.width ? {size:opts.width,type:WidthType.DXA} : undefined,
+  });
+
+  const mkHdrCell = (text, shading) => mkCell(text, {bold:true, color:"FFFFFF", shading, center:true});
+
+  const infoTable = (rows, headerShading) => new Table({
+    width:{size:100,type:WidthType.PERCENTAGE},
+    rows: rows.map((r,i) => new TableRow({
+      children: r.map((c,ci) => mkCell(c, i===0?{bold:true,color:"FFFFFF",shading:headerShading,center:true}:(ci===0?{bold:true}:{center:true})))
+    }))
+  });
+
+  const bandTable = (headerRow, dataRows, headerShading) => new Table({
+    width:{size:100,type:WidthType.PERCENTAGE},
+    rows:[
+      new TableRow({ children: headerRow.map(h=>mkHdrCell(h,headerShading)) }),
+      ...dataRows.map(row => new TableRow({ children: row.map((c,ci)=>mkCell(c,ci===0?{bold:true}:{center:true})) })),
+    ]
+  });
+
+  const { actualVals, treatedVals, hasTreatment, ncSection, nrSection, dbaSection } = buildReportSections(form, liveLp);
+
+  const isDuctPath = ["exhaust","intake"].includes(form.noisePath);
+  const attILVals = BAND_KEYS.map(k=>Number(form.attenuator.il?.[k])||0);
+  const rw = form.rockwool||{};
+  const rvcArr = calcRockwoolRVC(rw.length_m,rw.width_m,rw.height_m,rw.alpha||{});
+
+  const sectionBlocks = (sec) => {
+    if (!sec) return [];
+    const blocks = [
+      spacer(),
+      heading(sec.title,2),
+      bandTable(sec.bandHeader, sec.rows, grayShade),
+    ];
+    if (sec.badge) blocks.push(new Paragraph({ children:[new TextRun({text:sec.badge,italics:true,size:18,font:"Calibri",color:"475569"})], spacing:{before:80,after:80} }));
+    if (sec.treatment) {
+      blocks.push(spacer(), heading(sec.treatment.title,2));
+      blocks.push(bandTable(sec.bandHeader, sec.treatment.rows, blueShade));
+      if (sec.treatment.badge) blocks.push(new Paragraph({ children:[new TextRun({text:sec.treatment.badge,italics:true,size:18,font:"Calibri",color:"1D4ED8"})], spacing:{before:80,after:80} }));
+    }
+    return blocks;
+  };
+
+  const children = [
+    // Title
+    new Paragraph({ children:[new TextRun({text:"DG Acoustic Calculation Report",bold:true,size:32,font:"Calibri",color:"0E9F8E"})], alignment:AlignmentType.CENTER, spacing:{before:0,after:200} }),
+    new Paragraph({ children:[new TextRun({text:"AAPL Consultants  |  DG-SARIA",size:20,font:"Calibri",color:"475569"})], alignment:AlignmentType.CENTER, spacing:{before:0,after:400} }),
+
+    // Project info
+    heading("Project Information",2),
+    infoTable([
+      ["Field","Details"],
+      ["Project Name", project?.projectName||"—"],
+      ["Client / Owner", project?.clientName||"—"],
+      ["Contractor", project?.contractorName||"—"],
+      ["Location", project?.location||"—"],
+      ["Prepared By", project?.preparedBy||"—"],
+      ["Checked By", project?.checkedBy||"—"],
+      ["Revision", project?.revision||"00"],
+      ["Date", project?.date || new Date().toLocaleDateString("en-GB")],
+    ], tealShade),
+    spacer(),
+
+    // Equipment
+    heading("Equipment Details",2),
+    infoTable([
+      ["Parameter","Value"],
+      ["Equipment ID", form.generator.equipmentId||"—"],
+      ["Model Number", form.generator.modelNumber||"—"],
+      ["Rated kVA", String(form.generator.ratedKva||"—")],
+      ["Building Ref", form.generator.buildingRef||"—"],
+      ["Overall SWL", `${form.generator.swl_dba||"—"} dB(A)`],
+      ["Noise Input Type", form.generator.noiseInputType||"—"],
+      ["Noise Path", NOISE_PATH_LABEL[form.noisePath]||form.noisePath],
+      ["Receiver Description", form.receiver.description||"—"],
+      ["Noise Criterion", form.receiver.ncNrChoice],
+      ["Required Level", form.receiver.ncNrChoice==="NC"?`NC ${form.receiver.requiredNC}`:form.receiver.ncNrChoice==="NR"?`NR ${form.receiver.requiredNR}`:`${form.receiver.required_dba} dB(A)`],
+    ], tealShade),
+    spacer(),
+
+    // SWL per band
+    heading("Sound Power Level (SWL) per Octave Band",2),
+    bandTable(["Band (Hz)",...BANDS.map(String)],[["SWL (dB)",...BAND_KEYS.map(k=>fmt2(Number(form.generator.swl?.[k])||0))]],grayShade),
+    spacer(),
+
+    // Ducts
+    ...(isDuctPath && form.ducts?.length ? [
+      heading("Duct Details",2),
+      ...form.ducts.flatMap((d,idx)=>[
+        new Paragraph({ children:[boldRun(`Duct ${idx+1}: ${d.label||""} — ${d.lining==="lined"?"Lined":"Unlined"} — Elbows: ${d.elbows||0}`)], spacing:{before:100,after:60} }),
+        infoTable([
+          ["Parameter","Value","Parameter","Value"],
+          ["Width (mm)",String(d.width_mm||0),"Height (mm)",String(d.height_mm||0)],
+          ["Length (m)",String(d.length_m||0),"Lining Thickness (in)",String(d.liningThickness_in||0)],
+        ], grayShade),
+        spacer(),
+      ]),
+    ] : []),
+
+    // Through-path
+    ...(!isDuctPath ? [
+      heading("Transmission Loss Details",2),
+      infoTable([
+        ["Parameter","Value"],
+        ...(form.noisePath==="through_wall"?[["Wall Construction",form.throughPath?.wall_label||"—"],["Wall STC",String(form.throughPath?.wall_stc||"—")]]:
+           form.noisePath==="through_door"?[["Door Construction",form.throughPath?.door_label||"—"],["Door STC",String(form.throughPath?.door_stc||"—")]]:
+           [["Ceiling Construction",form.throughPath?.ceiling_label||"—"],["Ceiling STC",String(form.throughPath?.ceiling_stc||"—")]]),
+      ], tealShade),
+      spacer(),
+      ...(["through_ceiling_above","through_ceiling_below"].includes(form.noisePath)&&form.throughPath?.ceiling_bands?[
+        bandTable(["Band (Hz)",...BANDS.map(String)],[["TL (dB)",...BAND_KEYS.map(k=>fmt2(Number(form.throughPath.ceiling_bands?.[k])||0))]],grayShade),
+        spacer(),
+      ]:[]),
+    ] : []),
+
+    // Attenuator
+    ...(!["through_wall","through_door","through_ceiling_above","through_ceiling_below"].includes(form.noisePath)&&(form.attenuator.model||attILVals.some(v=>v>0)) ? [
+      heading("Attenuator / Acoustic Louver",2),
+      infoTable([
+        ["Model","Width (mm)","Height (mm)","Length (mm)","Pressure Drop (Pa)"],
+        [form.attenuator.model||"—",String(form.attenuator.width_mm||0),String(form.attenuator.height_mm||0),String(form.attenuator.length_mm||0),String(form.attenuator.pressureDrop_pa||0)],
+      ], tealShade),
+      spacer(),
+      bandTable(["Band (Hz)",...BANDS.map(String)],[["Insertion Loss (dB)",...attILVals.map(v=>fmt2(v))]],grayShade),
+      spacer(),
+    ]:[]),
+
+    // Rockwool
+    ...(["through_wall","through_ceiling_above"].includes(form.noisePath) ? [
+      heading("Rockwool Insulation Loss",2),
+      infoTable([
+        ["Parameter","Value"],
+        ["Rockwool Type",rw.type||"—"],
+        ["Room Length (m)",String(rw.length_m||0)],
+        ["Room Width (m)",String(rw.width_m||0)],
+        ["Room Height (m)",String(rw.height_m||0)],
+      ], {type:ShadingType.SOLID,color:"F59E0B",fill:"F59E0B"}),
+      spacer(),
+      bandTable(["Band (Hz)",...BANDS.map(String)],[
+        ["Absorption Coeff (αs)",...BAND_KEYS.map(k=>String(rw.alpha?.[k]||0))],
+        ["Room Vol Correction (dB)",...(rvcArr||BAND_KEYS.map(()=>0)).map(v=>fmt2(v))],
+      ],{type:ShadingType.SOLID,color:"F59E0B",fill:"F59E0B"}),
+      spacer(),
+    ]:[]),
+
+    // Receiver Lp
+    heading("Total Lp at Receiver per Octave Band",2),
+    bandTable(["Band (Hz)",...BANDS.map(String)],[["Lp (dB)",...actualVals.map(v=>fmt2(v))]],tealShade),
+
+    // Summary
+    ...sectionBlocks(ncSection),
+    ...sectionBlocks(nrSection),
+    ...sectionBlocks(dbaSection),
+
+    spacer(),
+    new Paragraph({ children:[new TextRun({text:`Report generated by AAPL Consultants DG-SARIA System  |  Rev ${project?.revision||"00"}  |  ${new Date().toLocaleDateString("en-GB")}`,size:16,font:"Calibri",color:"94A3B8",italics:true})], alignment:AlignmentType.CENTER }),
+  ];
+
+  const docObj = new Document({ sections:[{ properties:{}, children }] });
+  const blob = await Packer.toBlob(docObj);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `DG_Acoustic_Report_${(project?.projectName||"Report").replace(/\s+/g,"_")}_Rev${project?.revision||"00"}.docx`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ── Download Modal ──────────────────────────────────────── */
+function DownloadModal({ onClose, form, liveLp, project }) {
+  const [loading, setLoading] = useState(null); // "pdf"|"word"
+
+  const handle = async (type) => {
+    setLoading(type);
+    try {
+      if (type==="pdf")  await downloadPDF(form, liveLp, project);
+      else               await downloadWord(form, liveLp, project);
+      toast.success(`${type==="pdf"?"PDF":"Word"} downloaded`);
+      onClose();
+    } catch(e) {
+      console.error(e);
+      toast.error("Download failed: "+e.message);
+    } finally { setLoading(null); }
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.45)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{ background:"#fff", borderRadius:16, padding:"28px 28px 24px", width:360, boxShadow:"0 20px 60px rgba(0,0,0,.25)", fontFamily:"Inter,sans-serif" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <div style={{ width:36, height:36, borderRadius:10, background:"#E3F8F5", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <Download size={18} color="#0E9F8E"/>
+            </div>
+            <span style={{ fontSize:15, fontWeight:700, color:"#0F172A", fontFamily:"Plus Jakarta Sans,sans-serif" }}>Download Report</span>
+          </div>
+          <button onClick={onClose} type="button" style={{ background:"none", border:"none", cursor:"pointer", color:"#94A3B8", fontSize:18, lineHeight:1 }}>✕</button>
+        </div>
+        <p style={{ fontSize:12.5, color:"#64748B", margin:"0 0 20px" }}>
+          Choose format — includes project details, all calculations and summary tables. No equations.
+        </p>
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+          <button type="button" disabled={!!loading} onClick={()=>handle("pdf")}
+            style={{ display:"flex", alignItems:"center", gap:12, padding:"13px 16px", borderRadius:10, border:"1.5px solid #FECDD3", background:"#FFF1F2", cursor:loading?"not-allowed":"pointer", transition:"all .15s" }}
+            onMouseEnter={e=>{if(!loading){e.currentTarget.style.background="#FFE4E6";e.currentTarget.style.borderColor="#FB7185";}}}
+            onMouseLeave={e=>{e.currentTarget.style.background="#FFF1F2";e.currentTarget.style.borderColor="#FECDD3";}}>
+            <div style={{ width:38, height:38, borderRadius:9, background:"#FEE2E2", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+              {loading==="pdf" ? <Loader2 size={18} color="#E11D48" style={{animation:"spin .7s linear infinite"}}/> : <FileText size={18} color="#E11D48"/>}
+            </div>
+            <div style={{ textAlign:"left" }}>
+              <div style={{ fontSize:13.5, fontWeight:700, color:"#0F172A" }}>PDF Document</div>
+              <div style={{ fontSize:11, color:"#94A3B8", marginTop:2 }}>A4 layout, all sections, printable</div>
+            </div>
+          </button>
+          <button type="button" disabled={!!loading} onClick={()=>handle("word")}
+            style={{ display:"flex", alignItems:"center", gap:12, padding:"13px 16px", borderRadius:10, border:"1.5px solid #BFDBFE", background:"#EFF6FF", cursor:loading?"not-allowed":"pointer", transition:"all .15s" }}
+            onMouseEnter={e=>{if(!loading){e.currentTarget.style.background="#DBEAFE";e.currentTarget.style.borderColor="#60A5FA";}}}
+            onMouseLeave={e=>{e.currentTarget.style.background="#EFF6FF";e.currentTarget.style.borderColor="#BFDBFE";}}>
+            <div style={{ width:38, height:38, borderRadius:9, background:"#DBEAFE", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+              {loading==="word" ? <Loader2 size={18} color="#1D4ED8" style={{animation:"spin .7s linear infinite"}}/> : <FileIcon size={18} color="#1D4ED8"/>}
+            </div>
+            <div style={{ textAlign:"left" }}>
+              <div style={{ fontSize:13.5, fontWeight:700, color:"#0F172A" }}>Word Document</div>
+              <div style={{ fontSize:11, color:"#94A3B8", marginTop:2 }}>Editable .docx with tables</div>
+            </div>
+          </button>
+        </div>
+        <p style={{ fontSize:10.5, color:"#CBD5E1", margin:"16px 0 0", textAlign:"center" }}>
+          Libraries load on first use — may take a moment
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════ */
+export default function AcousticInputForm({ projectId, existing, onSaved, onResults, project }) {
   const [form, setForm] = useState(() => {
     if (existing) {
       const ducts = Array.isArray(existing.ducts) && existing.ducts.length
@@ -780,6 +1471,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
 
   const [saving,  setSaving]  = useState(false);
   const [running, setRunning] = useState(false);
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
 
   // Live receiver Lp — recomputes on every form change, no backend needed
   const liveLp = useMemo(() => calcLiveReceiverLp(form), [form]);
@@ -1445,19 +2137,19 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             const rw = form.rockwool || {};
             const rvcArr = isRockwoolPath ? (calcRockwoolRVC(rw.length_m, rw.width_m, rw.height_m, rw.alpha || {}) || BAND_KEYS.map(()=>0)) : BAND_KEYS.map(()=>0);
             const hasRockwool = isRockwoolPath && rvcArr.some(v => v !== 0);
-            // actualVals = pre-attenuator Lp (add attIL back to liveLp)
-            const actualVals = BAND_KEYS.map((k,i) => round1((liveLp[k] ?? 0) + attIL[i]));
-            const reductionVals = actualVals.map((v,i) => round1(v - reqVals[i]));
+            // actualVals = pre-attenuator Lp (full precision for calculation)
+            const actualVals = BAND_KEYS.map((k,i) => (liveLp[k] ?? 0) + attIL[i]);
+            const reductionVals = actualVals.map((v,i) => v - reqVals[i]);
             // ncRating without treatment (pre-attenuator)
             const rawLpObj   = Object.fromEntries(BAND_KEYS.map((k,i) => [k, actualVals[i]]));
             const ncRating   = calcNCRating(rawLpObj);
-            // With acoustic treatment:
+            // With acoustic treatment (full precision for calculation):
             //   duct paths  → liveLp (attenuator already subtracted inside calcLiveReceiverLp)
             //   through paths → actualVals + RVC per band (rockwool insulation loss added)
             const hasTreatment = isRockwoolPath ? hasRockwool : hasAtt;
             const treatedVals  = isRockwoolPath
-              ? BAND_KEYS.map((k,i) => round1(actualVals[i] + rvcArr[i]))
-              : BAND_KEYS.map(k => round1(liveLp[k] ?? 0));
+              ? BAND_KEYS.map((k,i) => actualVals[i] + rvcArr[i])
+              : BAND_KEYS.map(k => liveLp[k] ?? 0);
             const treatedLpObj = Object.fromEntries(BAND_KEYS.map((k,i) => [k, treatedVals[i]]));
             const ncRatingTreated = hasTreatment ? calcNCRating(treatedLpObj) : null;
 
@@ -1466,79 +2158,116 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             const thBand  = { padding:"5px 6px", textAlign:"center", background:"#FEF3C7", border:BD, fontWeight:700, color:"#92400E", minWidth:54 };
 
             return (
-              <div style={{ background:"#FFF7ED", borderRadius:12, border:"1px solid #FED7AA", padding:"14px 16px" }}>
-                <p style={{ fontSize:12, fontWeight:700, color:"#C2410C", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
-                  NC Noise Level Summary
-                </p>
-                <div style={{ overflowX:"auto" }}>
-                  <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
-                    <thead>
-                      <tr>
-                        <th style={thStyle}>Description</th>
-                        {BANDS.map(b => <th key={b} style={thBand}>{b} Hz</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {/* Row 1 — Total Lp at receiver */}
-                      <tr>
-                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#fff", whiteSpace:"nowrap" }}>Total Lp at Receiver (dB)</td>
-                        {actualVals.map((v,i) => (
-                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#fff", color:"#0F172A", fontWeight:600 }}>{v}</td>
-                        ))}
-                      </tr>
-                      {/* Row 2 — Required NC per band */}
-                      <tr>
-                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#F0FDF4", whiteSpace:"nowrap" }}>Required Noise Level: NC {reqNC}</td>
-                        {reqVals.map((v,i) => (
-                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#F0FDF4", color:"#166534", fontWeight:600 }}>{round1(v)}</td>
-                        ))}
-                      </tr>
-                      {/* Row 3 — Additional dB Reduction Required */}
-                      <tr>
-                        <td style={{ padding:"5px 8px", fontWeight:700, color:"#92400E", border:BD, background:"#FEF08A", whiteSpace:"nowrap" }}>Additional dB Reduction Required</td>
-                        {reductionVals.map((v,i) => (
-                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background: v > 0 ? "#FEF08A" : "#DCFCE7", color: v > 0 ? "#92400E" : "#166534", fontWeight:700 }}>
-                            {v > 0 ? `+${v}` : 0}
-                          </td>
-                        ))}
-                      </tr>
-                      {/* Row 4 — With Acoustic Treatment (attenuator for duct paths; rockwool RVC for through paths) */}
-                      {hasTreatment && (
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                {/* Main summary table */}
+                <div style={{ background:"#FFF7ED", borderRadius:12, border:"1px solid #FED7AA", padding:"14px 16px" }}>
+                  <p style={{ fontSize:12, fontWeight:700, color:"#C2410C", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                    NC Noise Level Summary
+                  </p>
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
+                      <thead>
                         <tr>
-                          <td style={{ padding:"5px 8px", fontWeight:700, color:"#1D4ED8", border:BD, background:"#EFF6FF", whiteSpace:"nowrap" }}>
-                            With Acoustic Treatment (dB)
-                          </td>
-                          {treatedVals.map((v,i) => (
-                            <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#EFF6FF", color:"#1D4ED8", fontWeight:700 }}>{v}</td>
+                          <th style={thStyle}>Description</th>
+                          {BANDS.map(b => <th key={b} style={thBand}>{b} Hz</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {/* Row 1 — Total Lp at receiver */}
+                        <tr>
+                          <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#fff", whiteSpace:"nowrap" }}>Total Lp at Receiver (dB)</td>
+                          {actualVals.map((v,i) => (
+                            <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#fff", color:"#0F172A", fontWeight:600 }}>{fmt2(v)}</td>
                           ))}
                         </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                {/* Rating badges */}
-                <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-                  {/* Without treatment */}
-                  <span style={{ fontSize:12.5, fontWeight:700, padding:"4px 12px", borderRadius:99, fontFamily:"Inter,sans-serif",
-                    background: ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#FEE2E2" : "#DCFCE7",
-                    color:      ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#991B1B" : "#166534",
-                    border: `1px solid ${ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#FECACA" : "#86EFAC"}`,
-                  }}>
-                    Without Treatment — Calculated NC: {ncRating}&nbsp;
-                    {typeof ncRating === "number" && ncRating <= reqNC ? "✓ Within limit" : "✗ Exceeds NC " + reqNC}
-                  </span>
-                  {/* With treatment — attenuator (duct paths) or rockwool RVC (through paths) */}
-                  {hasTreatment && ncRatingTreated !== null && (
+                        {/* Row 2 — Required NC per band */}
+                        <tr>
+                          <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#F0FDF4", whiteSpace:"nowrap" }}>Required Noise Level: NC {reqNC}</td>
+                          {reqVals.map((v,i) => (
+                            <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#F0FDF4", color:"#166534", fontWeight:600 }}>{fmt2(v)}</td>
+                          ))}
+                        </tr>
+                        {/* Row 3 — Additional dB Reduction Required */}
+                        <tr>
+                          <td style={{ padding:"5px 8px", fontWeight:700, color:"#92400E", border:BD, background:"#FEF08A", whiteSpace:"nowrap" }}>Additional dB Reduction Required</td>
+                          {reductionVals.map((v,i) => (
+                            <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background: v > 0 ? "#FEF08A" : "#DCFCE7", color: v > 0 ? "#92400E" : "#166534", fontWeight:700 }}>
+                              {v > 0 ? `+${fmt2(v)}` : 0}
+                            </td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* Rating badge — without treatment */}
+                  <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
                     <span style={{ fontSize:12.5, fontWeight:700, padding:"4px 12px", borderRadius:99, fontFamily:"Inter,sans-serif",
-                      background: ncRatingTreated === ">80" || (typeof ncRatingTreated === "number" && ncRatingTreated > reqNC) ? "#FEE2E2" : "#DBEAFE",
-                      color:      ncRatingTreated === ">80" || (typeof ncRatingTreated === "number" && ncRatingTreated > reqNC) ? "#991B1B" : "#1D4ED8",
-                      border: `1px solid ${ncRatingTreated === ">80" || (typeof ncRatingTreated === "number" && ncRatingTreated > reqNC) ? "#FECACA" : "#93C5FD"}`,
+                      background: ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#FEE2E2" : "#DCFCE7",
+                      color:      ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#991B1B" : "#166534",
+                      border: `1px solid ${ncRating === ">80" || (typeof ncRating === "number" && ncRating > reqNC) ? "#FECACA" : "#86EFAC"}`,
                     }}>
-                      With Acoustic Treatment — Calculated NC: {ncRatingTreated}&nbsp;
-                      {typeof ncRatingTreated === "number" && ncRatingTreated <= reqNC ? "✓ Within limit" : "✗ Exceeds NC " + reqNC}
+                      Without Treatment — Calculated NC: {ncRating}&nbsp;
+                      {typeof ncRating === "number" && ncRating <= reqNC ? "✓ Within limit" : "✗ Exceeds NC " + reqNC}
                     </span>
-                  )}
+                  </div>
                 </div>
+
+                {/* Separate Acoustic Treatment table */}
+                {hasTreatment && (
+                  <div style={{ background:"#EFF6FF", borderRadius:12, border:"1px solid #BFDBFE", padding:"14px 16px" }}>
+                    <p style={{ fontSize:12, fontWeight:700, color:"#1D4ED8", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                      With Acoustic Treatment — NC Summary
+                    </p>
+                    <div style={{ overflowX:"auto" }}>
+                      <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ padding:"5px 8px", textAlign:"left", background:"#DBEAFE", border:"1px solid #BFDBFE", fontWeight:700, color:"#1E40AF", whiteSpace:"nowrap", minWidth:160 }}>Description</th>
+                            {BANDS.map(b => <th key={b} style={{ padding:"5px 6px", textAlign:"center", background:"#DBEAFE", border:"1px solid #BFDBFE", fontWeight:700, color:"#1E40AF", minWidth:54 }}>{b} Hz</th>)}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td style={{ padding:"5px 8px", fontWeight:700, color:"#1D4ED8", border:"1px solid #BFDBFE", background:"#EFF6FF", whiteSpace:"nowrap" }}>With Acoustic Treatment (dB)</td>
+                            {treatedVals.map((v,i) => (
+                              <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #BFDBFE", background:"#EFF6FF", color:"#1D4ED8", fontWeight:700 }}>{fmt2(v)}</td>
+                            ))}
+                          </tr>
+                          <tr>
+                            <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #BFDBFE", background:"#fff", whiteSpace:"nowrap" }}>Required Noise Level: NC {reqNC}</td>
+                            {reqVals.map((v,i) => (
+                              <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #BFDBFE", background:"#F0FDF4", color:"#166534", fontWeight:600 }}>{fmt2(v)}</td>
+                            ))}
+                          </tr>
+                          <tr>
+                            <td style={{ padding:"5px 8px", fontWeight:700, color:"#92400E", border:"1px solid #BFDBFE", background:"#FEF08A", whiteSpace:"nowrap" }}>Additional dB Reduction Required</td>
+                            {treatedVals.map((v,i) => {
+                              const diff = v - reqVals[i];
+                              return (
+                                <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #BFDBFE", background: diff > 0 ? "#FEF08A" : "#DCFCE7", color: diff > 0 ? "#92400E" : "#166534", fontWeight:700 }}>
+                                  {diff > 0 ? `+${fmt2(diff)}` : 0}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    {/* Rating badge — with treatment */}
+                    {ncRatingTreated !== null && (
+                      <div style={{ marginTop:10, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                        <span style={{ fontSize:12.5, fontWeight:700, padding:"4px 12px", borderRadius:99, fontFamily:"Inter,sans-serif",
+                          background: ncRatingTreated === ">80" || (typeof ncRatingTreated === "number" && ncRatingTreated > reqNC) ? "#FEE2E2" : "#DBEAFE",
+                          color:      ncRatingTreated === ">80" || (typeof ncRatingTreated === "number" && ncRatingTreated > reqNC) ? "#991B1B" : "#1D4ED8",
+                          border: `1px solid ${ncRatingTreated === ">80" || (typeof ncRatingTreated === "number" && ncRatingTreated > reqNC) ? "#FECACA" : "#93C5FD"}`,
+                        }}>
+                          With Acoustic Treatment — Calculated NC: {ncRatingTreated}&nbsp;
+                          {typeof ncRatingTreated === "number" && ncRatingTreated <= reqNC ? "✓ Within limit" : "✗ Exceeds NC " + reqNC}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -1563,83 +2292,128 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             const rw = form.rockwool || {};
             const rvcArr = isRockwoolPath ? (calcRockwoolRVC(rw.length_m, rw.width_m, rw.height_m, rw.alpha || {}) || BAND_KEYS.map(()=>0)) : BAND_KEYS.map(()=>0);
             const hasRockwool = isRockwoolPath && rvcArr.some(v => v !== 0);
-            // actualVals = pre-attenuator Lp
-            const actualVals    = BAND_KEYS.map((k,i) => round1((liveLp[k] ?? 0) + attIL[i]));
-            const reqVals       = NR_A.map((a,i) => round1(a + NR_B[i] * reqNR));
-            const reductionVals = actualVals.map((v,i) => round1(v - reqVals[i]));
+            // actualVals = pre-attenuator Lp (full precision for calculation)
+            const actualVals    = BAND_KEYS.map((k,i) => (liveLp[k] ?? 0) + attIL[i]);
+            const reqVals       = NR_A.map((a,i) => a + NR_B[i] * reqNR);
+            const reductionVals = actualVals.map((v,i) => v - reqVals[i]);
             const rawLpObj   = Object.fromEntries(BAND_KEYS.map((k,i) => [k, actualVals[i]]));
             const nrRating   = calcNRRating(rawLpObj);
-            // With acoustic treatment:
+            // With acoustic treatment (full precision for calculation):
             //   duct paths  → liveLp (attenuator already subtracted inside calcLiveReceiverLp)
             //   through paths → actualVals + RVC per band (rockwool insulation loss added)
             const hasTreatment = isRockwoolPath ? hasRockwool : hasAtt;
             const treatedVals  = isRockwoolPath
-              ? BAND_KEYS.map((k,i) => round1(actualVals[i] + rvcArr[i]))
-              : BAND_KEYS.map(k => round1(liveLp[k] ?? 0));
+              ? BAND_KEYS.map((k,i) => actualVals[i] + rvcArr[i])
+              : BAND_KEYS.map(k => liveLp[k] ?? 0);
             const treatedLpObj = Object.fromEntries(BAND_KEYS.map((k,i) => [k, treatedVals[i]]));
             const nrRatingTreated = hasTreatment ? calcNRRating(treatedLpObj) : null;
 
             const BD = "1px solid #C4B5FD";
 
             return (
-              <div style={{ background:"#FAF5FF", borderRadius:12, border:"1px solid #E9D5FF", padding:"14px 16px" }}>
-                <p style={{ fontSize:12, fontWeight:700, color:"#6D28D9", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
-                  NR Noise Level Summary
-                </p>
-                <div style={{ overflowX:"auto" }}>
-                  <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
-                    <thead>
-                      <tr>
-                        <th style={{ padding:"5px 8px", textAlign:"left", background:"#EDE9FE", border:BD, fontWeight:700, color:"#5B21B6", whiteSpace:"nowrap", minWidth:160 }}>Description</th>
-                        {BANDS.map(b => <th key={b} style={{ padding:"5px 6px", textAlign:"center", background:"#EDE9FE", border:BD, fontWeight:700, color:"#5B21B6", minWidth:54 }}>{b} Hz</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#fff", whiteSpace:"nowrap" }}>Total Lp at Receiver (dB)</td>
-                        {actualVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#fff", color:"#0F172A", fontWeight:600 }}>{v}</td>)}
-                      </tr>
-                      <tr>
-                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#F0FDF4", whiteSpace:"nowrap" }}>Required Noise Level: NR {reqNR}</td>
-                        {reqVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#F0FDF4", color:"#166534", fontWeight:600 }}>{v}</td>)}
-                      </tr>
-                      <tr>
-                        <td style={{ padding:"5px 8px", fontWeight:700, color:"#5B21B6", border:BD, background:"#DDD6FE", whiteSpace:"nowrap" }}>Additional dB Reduction Required</td>
-                        {reductionVals.map((v,i) => (
-                          <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background: v > 0 ? "#DDD6FE" : "#DCFCE7", color: v > 0 ? "#5B21B6" : "#166534", fontWeight:700 }}>
-                            {v > 0 ? `+${v}` : 0}
-                          </td>
-                        ))}
-                      </tr>
-                      {hasTreatment && (
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                {/* Main summary table */}
+                <div style={{ background:"#FAF5FF", borderRadius:12, border:"1px solid #E9D5FF", padding:"14px 16px" }}>
+                  <p style={{ fontSize:12, fontWeight:700, color:"#6D28D9", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                    NR Noise Level Summary
+                  </p>
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
+                      <thead>
                         <tr>
-                          <td style={{ padding:"5px 8px", fontWeight:700, color:"#1D4ED8", border:BD, background:"#EFF6FF", whiteSpace:"nowrap" }}>With Acoustic Treatment (dB)</td>
-                          {treatedVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#EFF6FF", color:"#1D4ED8", fontWeight:700 }}>{v}</td>)}
+                          <th style={{ padding:"5px 8px", textAlign:"left", background:"#EDE9FE", border:BD, fontWeight:700, color:"#5B21B6", whiteSpace:"nowrap", minWidth:160 }}>Description</th>
+                          {BANDS.map(b => <th key={b} style={{ padding:"5px 6px", textAlign:"center", background:"#EDE9FE", border:BD, fontWeight:700, color:"#5B21B6", minWidth:54 }}>{b} Hz</th>)}
                         </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <div style={{ marginTop:10, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-                  <span style={{ fontSize:12.5, fontWeight:700, padding:"4px 12px", borderRadius:99, fontFamily:"Inter,sans-serif",
-                    background: nrRating === ">100" || (typeof nrRating === "number" && nrRating > reqNR) ? "#FEE2E2" : "#DCFCE7",
-                    color:      nrRating === ">100" || (typeof nrRating === "number" && nrRating > reqNR) ? "#991B1B" : "#166534",
-                    border: `1px solid ${nrRating === ">100" || (typeof nrRating === "number" && nrRating > reqNR) ? "#FECACA" : "#86EFAC"}`,
-                  }}>
-                    Without Treatment — Calculated NR: {nrRating}&nbsp;
-                    {typeof nrRating === "number" && nrRating <= reqNR ? "✓ Within limit" : "✗ Exceeds NR " + reqNR}
-                  </span>
-                  {hasTreatment && nrRatingTreated !== null && (
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#fff", whiteSpace:"nowrap" }}>Total Lp at Receiver (dB)</td>
+                          {actualVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#fff", color:"#0F172A", fontWeight:600 }}>{fmt2(v)}</td>)}
+                        </tr>
+                        <tr>
+                          <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#F0FDF4", whiteSpace:"nowrap" }}>Required Noise Level: NR {reqNR}</td>
+                          {reqVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#F0FDF4", color:"#166534", fontWeight:600 }}>{fmt2(v)}</td>)}
+                        </tr>
+                        <tr>
+                          <td style={{ padding:"5px 8px", fontWeight:700, color:"#5B21B6", border:BD, background:"#DDD6FE", whiteSpace:"nowrap" }}>Additional dB Reduction Required</td>
+                          {reductionVals.map((v,i) => (
+                            <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background: v > 0 ? "#DDD6FE" : "#DCFCE7", color: v > 0 ? "#5B21B6" : "#166534", fontWeight:700 }}>
+                              {v > 0 ? `+${fmt2(v)}` : 0}
+                            </td>
+                          ))}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* Rating badge — without treatment */}
+                  <div style={{ marginTop:10, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
                     <span style={{ fontSize:12.5, fontWeight:700, padding:"4px 12px", borderRadius:99, fontFamily:"Inter,sans-serif",
-                      background: nrRatingTreated === ">100" || (typeof nrRatingTreated === "number" && nrRatingTreated > reqNR) ? "#FEE2E2" : "#DBEAFE",
-                      color:      nrRatingTreated === ">100" || (typeof nrRatingTreated === "number" && nrRatingTreated > reqNR) ? "#991B1B" : "#1D4ED8",
-                      border: `1px solid ${nrRatingTreated === ">100" || (typeof nrRatingTreated === "number" && nrRatingTreated > reqNR) ? "#FECACA" : "#93C5FD"}`,
+                      background: nrRating === ">100" || (typeof nrRating === "number" && nrRating > reqNR) ? "#FEE2E2" : "#DCFCE7",
+                      color:      nrRating === ">100" || (typeof nrRating === "number" && nrRating > reqNR) ? "#991B1B" : "#166534",
+                      border: `1px solid ${nrRating === ">100" || (typeof nrRating === "number" && nrRating > reqNR) ? "#FECACA" : "#86EFAC"}`,
                     }}>
-                      With Acoustic Treatment — Calculated NR: {nrRatingTreated}&nbsp;
-                      {typeof nrRatingTreated === "number" && nrRatingTreated <= reqNR ? "✓ Within limit" : "✗ Exceeds NR " + reqNR}
+                      Without Treatment — Calculated NR: {nrRating}&nbsp;
+                      {typeof nrRating === "number" && nrRating <= reqNR ? "✓ Within limit" : "✗ Exceeds NR " + reqNR}
                     </span>
-                  )}
+                  </div>
                 </div>
+
+                {/* Separate Acoustic Treatment table */}
+                {hasTreatment && (
+                  <div style={{ background:"#EFF6FF", borderRadius:12, border:"1px solid #BFDBFE", padding:"14px 16px" }}>
+                    <p style={{ fontSize:12, fontWeight:700, color:"#1D4ED8", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                      With Acoustic Treatment — NR Summary
+                    </p>
+                    <div style={{ overflowX:"auto" }}>
+                      <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ padding:"5px 8px", textAlign:"left", background:"#DBEAFE", border:"1px solid #BFDBFE", fontWeight:700, color:"#1E40AF", whiteSpace:"nowrap", minWidth:160 }}>Description</th>
+                            {BANDS.map(b => <th key={b} style={{ padding:"5px 6px", textAlign:"center", background:"#DBEAFE", border:"1px solid #BFDBFE", fontWeight:700, color:"#1E40AF", minWidth:54 }}>{b} Hz</th>)}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td style={{ padding:"5px 8px", fontWeight:700, color:"#1D4ED8", border:"1px solid #BFDBFE", background:"#EFF6FF", whiteSpace:"nowrap" }}>With Acoustic Treatment (dB)</td>
+                            {treatedVals.map((v,i) => (
+                              <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #BFDBFE", background:"#EFF6FF", color:"#1D4ED8", fontWeight:700 }}>{fmt2(v)}</td>
+                            ))}
+                          </tr>
+                          <tr>
+                            <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #BFDBFE", background:"#fff", whiteSpace:"nowrap" }}>Required Noise Level: NR {reqNR}</td>
+                            {reqVals.map((v,i) => (
+                              <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #BFDBFE", background:"#F0FDF4", color:"#166534", fontWeight:600 }}>{fmt2(v)}</td>
+                            ))}
+                          </tr>
+                          <tr>
+                            <td style={{ padding:"5px 8px", fontWeight:700, color:"#92400E", border:"1px solid #BFDBFE", background:"#FEF08A", whiteSpace:"nowrap" }}>Additional dB Reduction Required</td>
+                            {treatedVals.map((v,i) => {
+                              const diff = v - reqVals[i];
+                              return (
+                                <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #BFDBFE", background: diff > 0 ? "#FEF08A" : "#DCFCE7", color: diff > 0 ? "#92400E" : "#166534", fontWeight:700 }}>
+                                  {diff > 0 ? `+${fmt2(diff)}` : 0}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    {/* Rating badge — with treatment */}
+                    {nrRatingTreated !== null && (
+                      <div style={{ marginTop:10, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+                        <span style={{ fontSize:12.5, fontWeight:700, padding:"4px 12px", borderRadius:99, fontFamily:"Inter,sans-serif",
+                          background: nrRatingTreated === ">100" || (typeof nrRatingTreated === "number" && nrRatingTreated > reqNR) ? "#FEE2E2" : "#DBEAFE",
+                          color:      nrRatingTreated === ">100" || (typeof nrRatingTreated === "number" && nrRatingTreated > reqNR) ? "#991B1B" : "#1D4ED8",
+                          border: `1px solid ${nrRatingTreated === ">100" || (typeof nrRatingTreated === "number" && nrRatingTreated > reqNR) ? "#FECACA" : "#93C5FD"}`,
+                        }}>
+                          With Acoustic Treatment — Calculated NR: {nrRatingTreated}&nbsp;
+                          {typeof nrRatingTreated === "number" && nrRatingTreated <= reqNR ? "✓ Within limit" : "✗ Exceeds NR " + reqNR}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -1648,9 +2422,10 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
           {form.receiver.ncNrChoice === "dBA" && (() => {
             const dbaLimit = Number(form.receiver.required_dba) || 65;
             const A_WT = [-26.2, -16.1, -8.6, -3.2, 0.0, 1.2, 1.0, -1.1];
-            const calcTotalDBA = (vals) => round1(10 * Math.log10(
+            // Full precision for internal calculation
+            const calcTotalDBA = (vals) => 10 * Math.log10(
               vals.reduce((sum, lp, i) => sum + Math.pow(10, (lp + A_WT[i]) / 10), 0)
-            ));
+            );
             // attIL = user-entered attenuator IL (already subtracted inside liveLp)
             const attIL  = BAND_KEYS.map(k => Number(form.attenuator.il?.[k]) || 0);
             const hasAtt = attIL.some(v => v > 0);
@@ -1659,82 +2434,119 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
             const rw = form.rockwool || {};
             const rvcArr = isRockwoolPath ? (calcRockwoolRVC(rw.length_m, rw.width_m, rw.height_m, rw.alpha || {}) || BAND_KEYS.map(()=>0)) : BAND_KEYS.map(()=>0);
             const hasRockwool = isRockwoolPath && rvcArr.some(v => v !== 0);
-            // actualVals = pre-attenuator Lp (add attIL back to liveLp)
-            const actualVals = BAND_KEYS.map((k,i) => round1((liveLp[k] ?? 0) + attIL[i]));
+            // actualVals = pre-attenuator Lp (full precision for calculation)
+            const actualVals = BAND_KEYS.map((k,i) => (liveLp[k] ?? 0) + attIL[i]);
             const totalDBA   = calcTotalDBA(actualVals);
             const exceed     = totalDBA - dbaLimit;
-            // With acoustic treatment:
+            // With acoustic treatment (full precision for calculation):
             //   duct paths  → liveLp (attenuator already subtracted inside calcLiveReceiverLp)
             //   through paths → actualVals + RVC per band (rockwool insulation loss added)
             const hasTreatment = isRockwoolPath ? hasRockwool : hasAtt;
             const treatedVals     = isRockwoolPath
-              ? BAND_KEYS.map((k,i) => round1(actualVals[i] + rvcArr[i]))
-              : BAND_KEYS.map(k => round1(liveLp[k] ?? 0));
+              ? BAND_KEYS.map((k,i) => actualVals[i] + rvcArr[i])
+              : BAND_KEYS.map(k => liveLp[k] ?? 0);
             const totalDBATreated = hasTreatment ? calcTotalDBA(treatedVals) : null;
-            const exceedTreated   = hasTreatment ? round1(totalDBATreated - dbaLimit) : null;
+            const exceedTreated   = hasTreatment ? totalDBATreated - dbaLimit : null;
 
             const BD = "1px solid #FECDD3";
 
             return (
-              <div style={{ background:"#FFF1F2", borderRadius:12, border:"1px solid #FECDD3", padding:"14px 16px" }}>
-                <p style={{ fontSize:12, fontWeight:700, color:"#BE123C", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
-                  dB(A) Limit Summary
-                </p>
-                <div style={{ overflowX:"auto" }}>
-                  <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
-                    <thead>
-                      <tr>
-                        <th style={{ padding:"5px 8px", textAlign:"left", background:"#FFE4E6", border:BD, fontWeight:700, color:"#9F1239", whiteSpace:"nowrap", minWidth:160 }}>Description</th>
-                        {BANDS.map(b => <th key={b} style={{ padding:"5px 6px", textAlign:"center", background:"#FFE4E6", border:BD, fontWeight:700, color:"#9F1239", minWidth:54 }}>{b} Hz</th>)}
-                        <th style={{ padding:"5px 8px", textAlign:"center", background:"#FFE4E6", border:BD, fontWeight:700, color:"#9F1239", minWidth:70 }}>Total dB(A)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#fff", whiteSpace:"nowrap" }}>Total Lp at Receiver (dB)</td>
-                        {actualVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#fff", color:"#0F172A", fontWeight:600 }}>{v}</td>)}
-                        <td style={{ padding:"5px 8px", textAlign:"center", border:BD, background:"#FFF7ED", color:"#C2410C", fontWeight:800, fontSize:13 }}>{totalDBA}</td>
-                      </tr>
-                      <tr>
-                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#F0FDF4", whiteSpace:"nowrap" }}>A-weighting Correction (dB)</td>
-                        {A_WT.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#F0FDF4", color:"#166534", fontWeight:600 }}>{v > 0 ? `+${v}` : v}</td>)}
-                        <td style={{ padding:"5px 8px", textAlign:"center", border:BD, background:"#F0FDF4", color:"#64748B", fontStyle:"italic", fontSize:11 }}>—</td>
-                      </tr>
-                      <tr>
-                        <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#fff", whiteSpace:"nowrap" }}>Lp + A-weight (dB(A))</td>
-                        {actualVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#fff", color:"#0F172A", fontWeight:600 }}>{round1(v + A_WT[i])}</td>)}
-                        <td style={{ padding:"5px 8px", textAlign:"center", border:BD, background:"#fff", color:"#C2410C", fontWeight:700, fontSize:12 }}>{totalDBA}</td>
-                      </tr>
-                      {hasTreatment && (
+              <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                {/* Main summary table */}
+                <div style={{ background:"#FFF1F2", borderRadius:12, border:"1px solid #FECDD3", padding:"14px 16px" }}>
+                  <p style={{ fontSize:12, fontWeight:700, color:"#BE123C", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                    dB(A) Limit Summary
+                  </p>
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
+                      <thead>
                         <tr>
-                          <td style={{ padding:"5px 8px", fontWeight:700, color:"#1D4ED8", border:BD, background:"#EFF6FF", whiteSpace:"nowrap" }}>With Acoustic Treatment (dB)</td>
-                          {treatedVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#EFF6FF", color:"#1D4ED8", fontWeight:700 }}>{v}</td>)}
-                          <td style={{ padding:"5px 8px", textAlign:"center", border:BD, background:"#EFF6FF", color:"#1D4ED8", fontWeight:800, fontSize:13 }}>{totalDBATreated}</td>
+                          <th style={{ padding:"5px 8px", textAlign:"left", background:"#FFE4E6", border:BD, fontWeight:700, color:"#9F1239", whiteSpace:"nowrap", minWidth:160 }}>Description</th>
+                          {BANDS.map(b => <th key={b} style={{ padding:"5px 6px", textAlign:"center", background:"#FFE4E6", border:BD, fontWeight:700, color:"#9F1239", minWidth:54 }}>{b} Hz</th>)}
+                          <th style={{ padding:"5px 8px", textAlign:"center", background:"#FFE4E6", border:BD, fontWeight:700, color:"#9F1239", minWidth:70 }}>Total dB(A)</th>
                         </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <div style={{ marginTop:12, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-                  <span style={{ fontSize:12.5, fontWeight:700, padding:"4px 12px", borderRadius:99, fontFamily:"Inter,sans-serif",
-                    background: exceed > 0 ? "#FEE2E2" : "#DCFCE7",
-                    color: exceed > 0 ? "#991B1B" : "#166534",
-                    border: `1px solid ${exceed > 0 ? "#FECACA" : "#86EFAC"}`,
-                  }}>
-                    Without Treatment — Total: {totalDBA} dB(A)&nbsp;
-                    {exceed > 0 ? `✗ Exceeds limit by +${round1(exceed)} dB(A)` : `✓ Within dB(A) limit (${dbaLimit})`}
-                  </span>
-                  {hasTreatment && totalDBATreated !== null && (
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#fff", whiteSpace:"nowrap" }}>Total Lp at Receiver (dB)</td>
+                          {actualVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#fff", color:"#0F172A", fontWeight:600 }}>{fmt2(v)}</td>)}
+                          <td style={{ padding:"5px 8px", textAlign:"center", border:BD, background:"#FFF7ED", color:"#C2410C", fontWeight:800, fontSize:13 }}>{fmt2(totalDBA)}</td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#F0FDF4", whiteSpace:"nowrap" }}>A-weighting Correction (dB)</td>
+                          {A_WT.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#F0FDF4", color:"#166534", fontWeight:600 }}>{v > 0 ? `+${v}` : v}</td>)}
+                          <td style={{ padding:"5px 8px", textAlign:"center", border:BD, background:"#F0FDF4", color:"#64748B", fontStyle:"italic", fontSize:11 }}>—</td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:BD, background:"#fff", whiteSpace:"nowrap" }}>Lp + A-weight (dB(A))</td>
+                          {actualVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:BD, background:"#fff", color:"#0F172A", fontWeight:600 }}>{fmt2(v + A_WT[i])}</td>)}
+                          <td style={{ padding:"5px 8px", textAlign:"center", border:BD, background:"#fff", color:"#C2410C", fontWeight:700, fontSize:12 }}>{fmt2(totalDBA)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* Rating badge — without treatment */}
+                  <div style={{ marginTop:12, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
                     <span style={{ fontSize:12.5, fontWeight:700, padding:"4px 12px", borderRadius:99, fontFamily:"Inter,sans-serif",
-                      background: exceedTreated > 0 ? "#FEE2E2" : "#DBEAFE",
-                      color: exceedTreated > 0 ? "#991B1B" : "#1D4ED8",
-                      border: `1px solid ${exceedTreated > 0 ? "#FECACA" : "#93C5FD"}`,
+                      background: exceed > 0 ? "#FEE2E2" : "#DCFCE7",
+                      color: exceed > 0 ? "#991B1B" : "#166534",
+                      border: `1px solid ${exceed > 0 ? "#FECACA" : "#86EFAC"}`,
                     }}>
-                      With Acoustic Treatment — Total: {totalDBATreated} dB(A)&nbsp;
-                      {exceedTreated > 0 ? `✗ Exceeds limit by +${round1(exceedTreated)} dB(A)` : `✓ Within dB(A) limit (${dbaLimit})`}
+                      Without Treatment — Total: {fmt2(totalDBA)} dB(A)&nbsp;
+                      {exceed > 0 ? `✗ Exceeds limit by +${fmt2(exceed)} dB(A)` : `✓ Within dB(A) limit (${dbaLimit})`}
                     </span>
-                  )}
+                  </div>
                 </div>
+
+                {/* Separate Acoustic Treatment table */}
+                {hasTreatment && totalDBATreated !== null && (
+                  <div style={{ background:"#EFF6FF", borderRadius:12, border:"1px solid #BFDBFE", padding:"14px 16px" }}>
+                    <p style={{ fontSize:12, fontWeight:700, color:"#1D4ED8", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                      With Acoustic Treatment — dB(A) Summary
+                    </p>
+                    <div style={{ overflowX:"auto" }}>
+                      <table style={{ borderCollapse:"collapse", width:"100%", minWidth:560, fontFamily:"Inter,sans-serif", fontSize:11.5 }}>
+                        <thead>
+                          <tr>
+                            <th style={{ padding:"5px 8px", textAlign:"left", background:"#DBEAFE", border:"1px solid #BFDBFE", fontWeight:700, color:"#1E40AF", whiteSpace:"nowrap", minWidth:160 }}>Description</th>
+                            {BANDS.map(b => <th key={b} style={{ padding:"5px 6px", textAlign:"center", background:"#DBEAFE", border:"1px solid #BFDBFE", fontWeight:700, color:"#1E40AF", minWidth:54 }}>{b} Hz</th>)}
+                            <th style={{ padding:"5px 8px", textAlign:"center", background:"#DBEAFE", border:"1px solid #BFDBFE", fontWeight:700, color:"#1E40AF", minWidth:70 }}>Total dB(A)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td style={{ padding:"5px 8px", fontWeight:700, color:"#1D4ED8", border:"1px solid #BFDBFE", background:"#EFF6FF", whiteSpace:"nowrap" }}>With Acoustic Treatment (dB)</td>
+                            {treatedVals.map((v,i) => (
+                              <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #BFDBFE", background:"#EFF6FF", color:"#1D4ED8", fontWeight:700 }}>{fmt2(v)}</td>
+                            ))}
+                            <td style={{ padding:"5px 8px", textAlign:"center", border:"1px solid #BFDBFE", background:"#EFF6FF", color:"#1D4ED8", fontWeight:800, fontSize:13 }}>{fmt2(totalDBATreated)}</td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #BFDBFE", background:"#F0FDF4", whiteSpace:"nowrap" }}>A-weighting Correction (dB)</td>
+                            {A_WT.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #BFDBFE", background:"#F0FDF4", color:"#166534", fontWeight:600 }}>{v > 0 ? `+${v}` : v}</td>)}
+                            <td style={{ padding:"5px 8px", textAlign:"center", border:"1px solid #BFDBFE", background:"#F0FDF4", color:"#64748B", fontStyle:"italic", fontSize:11 }}>—</td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding:"5px 8px", fontWeight:600, color:"#1E293B", border:"1px solid #BFDBFE", background:"#fff", whiteSpace:"nowrap" }}>Lp + A-weight (dB(A))</td>
+                            {treatedVals.map((v,i) => <td key={i} style={{ padding:"5px 6px", textAlign:"center", border:"1px solid #BFDBFE", background:"#fff", color:"#0F172A", fontWeight:600 }}>{fmt2(v + A_WT[i])}</td>)}
+                            <td style={{ padding:"5px 8px", textAlign:"center", border:"1px solid #BFDBFE", background:"#fff", color:"#1D4ED8", fontWeight:700, fontSize:12 }}>{fmt2(totalDBATreated)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    {/* Rating badge — with treatment */}
+                    <div style={{ marginTop:12, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                      <span style={{ fontSize:12.5, fontWeight:700, padding:"4px 12px", borderRadius:99, fontFamily:"Inter,sans-serif",
+                        background: exceedTreated > 0 ? "#FEE2E2" : "#DBEAFE",
+                        color: exceedTreated > 0 ? "#991B1B" : "#1D4ED8",
+                        border: `1px solid ${exceedTreated > 0 ? "#FECACA" : "#93C5FD"}`,
+                      }}>
+                        With Acoustic Treatment — Total: {fmt2(totalDBATreated)} dB(A)&nbsp;
+                        {exceedTreated > 0 ? `✗ Exceeds limit by +${fmt2(exceedTreated)} dB(A)` : `✓ Within dB(A) limit (${dbaLimit})`}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -1928,7 +2740,24 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
           {saving&&<Loader2 size={16} style={{animation:"spin .7s linear infinite"}}/>}
           {saving?"Saving…":existing?._id?"Update & Calculate":"Save & Calculate"}
         </motion.button>
+
+        <motion.button onClick={()=>setShowDownloadModal(true)} type="button"
+          whileHover={{scale:1.02,y:-1}} whileTap={{scale:0.98}}
+          style={{ display:"flex", alignItems:"center", gap:8, padding:"11px 22px", borderRadius:10, border:"1.5px solid #6366F1", background:"linear-gradient(135deg,#6366F1,#4F46E5)", color:"#fff", fontSize:14, fontWeight:700, fontFamily:"Plus Jakarta Sans,sans-serif", boxShadow:"0 4px 14px rgba(99,102,241,.3)", cursor:"pointer" }}>
+          <Download size={16}/>
+          Download
+        </motion.button>
       </div>
+
+      {/* ── Download Modal ── */}
+      {showDownloadModal && (
+        <DownloadModal
+          onClose={()=>setShowDownloadModal(false)}
+          form={form}
+          liveLp={calcLiveReceiverLp(form)}
+          project={project}
+        />
+      )}
     </div>
   );
 }
