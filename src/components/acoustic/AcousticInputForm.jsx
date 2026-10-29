@@ -877,6 +877,312 @@ function buildReportSections(form, liveLp) {
   return { actualVals, treatedVals, hasTreatment, rvcArr, attIL, ncSection, nrSection, dbaSection };
 }
 
+/* ── HTML Report Builder (for preview) ───────────────────── */
+function buildHTMLReport(form, liveLp, project) {
+  const sections = buildReportSections(form, liveLp);
+  const { ncSection, nrSection, dbaSection, attIL, rvcArr, actualVals } = sections;
+  const g    = form.generator    || {};
+  const rec  = form.receiver     || {};
+  const room = form.room         || {};
+  const de   = form.distanceEffect || {};
+  const erl  = form.erl          || {};
+  const att  = form.attenuator   || {};
+  const tp   = form.throughPath  || {};
+  const rw   = form.rockwool     || {};
+  const ducts = Array.isArray(form.ducts) ? form.ducts : [];
+  const path = form.noisePath;
+  const pathLabel = NOISE_PATH_LABEL[path] || path;
+  const isDuctPath    = ["exhaust","intake"].includes(path);
+  const isThroughPath = ["through_wall","through_door","through_ceiling_above","through_ceiling_below"].includes(path);
+  const isRockwoolPath = ["through_wall","through_ceiling_above"].includes(path);
+  const useRoom = form.roomOrDistance === "spaceRoom";
+
+  // ── helpers ───────────────────────────────────────────────
+  const skip  = v => v===undefined||v===null||v===""||v===0||v==="0"||v==="-"||v==="—";
+  const skipN = v => v===undefined||v===null||v===0||Number(v)===0;
+  const fmt   = v => (v===undefined||v===null) ? "-" : (typeof v==="number" ? (Number.isInteger(v)?String(v):v.toFixed(2)) : String(v));
+  const now   = new Date();
+  const dateStr = now.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+
+  // ── simple key-value table (no band columns) ──────────────
+  const kvTable = (rows) => {
+    const visible = rows.filter(([,v])=>!skip(v));
+    if (!visible.length) return "";
+    return `<table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:4px;">
+      <tbody>${visible.map(([l,v],i)=>`
+        <tr style="background:${i%2===0?"#F8FAFC":"#fff"};">
+          <td style="padding:5px 10px;color:#64748B;font-weight:600;width:44%;border-bottom:1px solid #E2E8F0;">${l}</td>
+          <td style="padding:5px 10px;color:#0F172A;border-bottom:1px solid #E2E8F0;">${v}</td>
+        </tr>`).join("")}
+      </tbody>
+    </table>`;
+  };
+
+  // ── band-column table (Parameter + 8 Hz cols + Total) ─────
+  const bandHead = (withTotal=true) => `<tr style="background:#1E293B;color:#fff;">
+    <th style="padding:6px 10px;text-align:left;font-size:11px;white-space:nowrap;">Parameter</th>
+    ${BANDS.map(b=>`<th style="padding:6px 5px;text-align:center;font-size:10.5px;">${b} Hz</th>`).join("")}
+    ${withTotal?`<th style="padding:6px 8px;text-align:center;font-size:10.5px;">Total</th>`:""}
+  </tr>`;
+
+  const bandTable = (rows, withTotal=true) => {
+    if (!rows||!rows.length) return "";
+    return `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:4px;">
+      <thead>${bandHead(withTotal)}</thead>
+      <tbody>${rows.filter(r=>r).map((r,ri)=>{
+        const [label,...vals] = r;
+        const isYellow = label&&(label.includes("Additional")||label.includes("Reduction Required"));
+        const isGreen  = label&&label.includes("Required Noise");
+        const bg  = isYellow?"#FEFCE8":isGreen?"#F0FDF4":(ri%2===0?"#F8FAFC":"#fff");
+        const col = isYellow?"#92400E":isGreen?"#14532D":"#0F172A";
+        const fw  = isYellow||ri===0?"700":"400";
+        return `<tr style="background:${bg};">
+          <td style="padding:5px 10px;color:${col};font-weight:${fw};border-bottom:1px solid #E2E8F0;white-space:nowrap;">${label}</td>
+          ${vals.map(v=>`<td style="padding:5px 5px;text-align:center;color:${col};font-weight:${fw};border-bottom:1px solid #E2E8F0;">${v??"-"}</td>`).join("")}
+        </tr>`;
+      }).join("")}</tbody>
+    </table>`;
+  };
+
+  // ── section heading ────────────────────────────────────────
+  const secHead = (title,color="#6366F1") =>
+    `<div style="font-size:13px;font-weight:700;color:#1E293B;margin:22px 0 8px;padding-bottom:5px;border-bottom:2px solid ${color};">${title}</div>`;
+
+  const badge = (txt) => {
+    if (!txt) return "";
+    const bad = txt.includes("✗");
+    return `<div style="margin:6px 0 10px;padding:6px 12px;border-radius:6px;background:${bad?"#FEE2E2":"#DCFCE7"};color:${bad?"#991B1B":"#14532D"};font-size:11.5px;font-weight:600;">${txt}</div>`;
+  };
+
+  // ── result section (NC/NR/dBA) with optional treatment ────
+  const resultSec = (sec) => {
+    if (!sec) return "";
+    return `${secHead(sec.title,"#6366F1")}
+      ${bandTable(sec.rows, sec.title&&sec.title.includes("dB(A)") ? true : false)}
+      ${badge(sec.badge)}
+      ${sec.treatment ? `
+        <div style="font-size:12px;font-weight:600;color:#1E293B;margin:10px 0 4px;">With Acoustic Treatment</div>
+        ${bandTable(sec.treatment.rows, sec.title&&sec.title.includes("dB(A)") ? true : false)}
+        ${badge(sec.treatment.badge)}` : ""}`;
+  };
+
+  // ── SWL per band ──────────────────────────────────────────
+  const swlBands = BAND_KEYS.map(k => g.swl?.[k] ?? 0);
+  const rawBands = BAND_KEYS.map(k => g.rawBand?.[k] ?? 0);
+  const hasSwl   = swlBands.some(v=>v!==0);
+  const hasRaw   = rawBands.some(v=>v!==0);
+
+  // ── Duct IL summary per duct ──────────────────────────────
+  const ductSections = isDuctPath ? ducts.map((d,di)=>{
+    const lbl = d.label||`Duct ${di+1}`;
+    const rows = [];
+    // straight lined
+    const linedIL = BAND_KEYS.map(k=>Number(d.lined?.il?.[k])||0);
+    if (linedIL.some(v=>v>0)) rows.push(["Lined Duct IL (dB)",...linedIL.map(v=>fmt(v))]);
+    // straight unlined
+    const unlinedIL = BAND_KEYS.map(k=>Number(d.unlined?.il?.[k])||0);
+    if (unlinedIL.some(v=>v>0)) rows.push(["Unlined Duct IL (dB)",...unlinedIL.map(v=>fmt(v))]);
+    // elbow
+    const elbowIL = BAND_KEYS.map(k=>Number(d.elbow?.il?.[k])||0);
+    if (elbowIL.some(v=>v>0)) rows.push(["Elbow IL (dB)",...elbowIL.map(v=>fmt(v))]);
+    // end reflection
+    const erlIL = BAND_KEYS.map(k=>Number(d.erl?.il?.[k])||0);
+    if (erlIL.some(v=>v>0)) rows.push(["End Reflection Loss (dB)",...erlIL.map(v=>fmt(v))]);
+    // total duct IL
+    const totalIL = BAND_KEYS.map((_,i)=>linedIL[i]+unlinedIL[i]+elbowIL[i]+erlIL[i]);
+    if (rows.length>1) rows.push(["Total Duct IL (dB)",...totalIL.map(v=>fmt(v))]);
+    // duct info kv
+    const kvRows = [];
+    if (!skip(d.label)) kvRows.push(["Label", d.label]);
+    if (!skipN(d.lined?.length_m)) kvRows.push(["Lined Length", `${d.lined.length_m} m`]);
+    if (!skipN(d.lined?.width_mm))  kvRows.push(["Lined Width × Height", `${d.lined.width_mm} × ${d.lined.height_mm} mm`]);
+    if (!skipN(d.unlined?.length_m)) kvRows.push(["Unlined Length", `${d.unlined.length_m} m`]);
+    if (!skipN(d.unlined?.width_mm)) kvRows.push(["Unlined Width × Height", `${d.unlined.width_mm} × ${d.unlined.height_mm} mm`]);
+    if (!skipN(d.elbow?.count))      kvRows.push(["Elbows", `${d.elbow.count} × (${d.elbow.lined?"Lined":"Unlined"}, ${d.elbow.width_mm} mm wide)`]);
+    return { lbl, kvRows, rows };
+  }).filter(ds=>ds.rows.length||ds.kvRows.length) : [];
+
+  // ── through-path TL ───────────────────────────────────────
+  const wallTL    = path==="through_wall"    ? (BAND_KEYS.map(k=>Number(tp.wall_tl?.[k])||0))   : null;
+  const doorTL    = path==="through_door"    ? (BAND_KEYS.map(k=>Number(tp.door_tl?.[k])||0))   : null;
+  const ceilTL    = ["through_ceiling_above","through_ceiling_below"].includes(path)
+                    ? (BAND_KEYS.map(k=>Number(tp.ceiling_bands?.[k])||0)) : null;
+
+  // ── attenuator ────────────────────────────────────────────
+  const attILArr = BAND_KEYS.map(k=>Number(att.il?.[k])||0);
+  const hasAtt   = attILArr.some(v=>v>0);
+
+  // ── rockwool RVC ──────────────────────────────────────────
+  const hasRVC   = isRockwoolPath && rvcArr && rvcArr.some(v=>v!==0);
+
+  // ── ERL ───────────────────────────────────────────────────
+  const erlW = Number(erl.width_mm)||0;
+  const erlH = Number(erl.height_mm)||0;
+
+  // ═══════════════ BUILD HTML ═══════════════════════════════
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Acoustic Calculation Report</title>
+  <style>
+    *{box-sizing:border-box;}
+    body{margin:0;padding:0;font-family:'Segoe UI',Arial,sans-serif;background:#F1F5F9;color:#0F172A;}
+    .page{max-width:900px;margin:0 auto;background:#fff;padding:32px 36px 52px;}
+    @media print{body{background:#fff;}.page{padding:20px 24px;}}
+  </style>
+</head><body><div class="page">
+
+  <!-- HEADER -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:14px;border-bottom:3px solid #6366F1;">
+    <div>
+      <div style="font-size:20px;font-weight:800;color:#1E293B;letter-spacing:-0.5px;">Acoustic Calculation Report</div>
+      <div style="font-size:11.5px;color:#64748B;margin-top:3px;">AAPL Consultants / DG-SARIA &nbsp;·&nbsp; ${dateStr}</div>
+    </div>
+    <div style="text-align:right;font-size:11px;color:#64748B;line-height:1.7;">
+      ${project?.name?`<div style="font-weight:700;color:#334155;font-size:12px;">${project.name}</div>`:""}
+      ${project?.client?`<div>${project.client}</div>`:""}
+      <div>Path: <strong>${pathLabel}</strong></div>
+    </div>
+  </div>
+
+  <!-- 1. EQUIPMENT & PROJECT DETAILS -->
+  ${secHead("1. Equipment & Project Details")}
+  ${kvTable([
+    ["Project Name",         project?.name],
+    ["Client",               project?.client],
+    ["Equipment ID",         g.equipmentId],
+    ["Model Number",         g.modelNumber],
+    ["Rated kVA",            g.ratedKva ? `${g.ratedKva} kVA` : null],
+    ["Building Ref",         g.buildingRef],
+    ["Noise Path",           pathLabel],
+    ["Noise Input Type",     g.noiseInputType],
+    ["Measurement Distance", !skipN(g.measurementDistance_m) ? `${g.measurementDistance_m} m` : null],
+    ["Overall SWL dB(A)",    !skipN(g.swl_dba) ? `${g.swl_dba} dB(A)` : null],
+  ])}
+
+  <!-- 2. GENERATOR NOISE (SWL per band) -->
+  ${(hasSwl||hasRaw) ? `
+    ${secHead("2. Generator Noise Input")}
+    ${hasRaw ? bandTable([["Raw Input per Band (dB)",...rawBands.map(v=>fmt(v))]],false) : ""}
+    ${hasSwl ? bandTable([["Sound Power Level SWL (dB)",...swlBands.map(v=>fmt(v))]],false) : ""}
+  ` : ""}
+
+  <!-- 3. DUCT SECTIONS (exhaust / intake paths) -->
+  ${isDuctPath && ductSections.length ? `
+    ${secHead("3. Duct Attenuation")}
+    ${ductSections.map((ds,i)=>`
+      ${ductSections.length>1?`<div style="font-size:12px;font-weight:600;color:#475569;margin:10px 0 5px;">${ds.lbl}</div>`:""}
+      ${kvTable(ds.kvRows)}
+      ${bandTable(ds.rows,false)}
+    `).join("")}
+  ` : ""}
+
+  <!-- 4. END REFLECTION LOSS -->
+  ${isDuctPath && !skipN(erlW) && !skipN(erlH) ? `
+    ${secHead("4. End Reflection Loss")}
+    ${kvTable([
+      ["ERL Opening Width",  `${erlW} mm`],
+      ["ERL Opening Height", `${erlH} mm`],
+    ])}
+  ` : ""}
+
+  <!-- 5. THROUGH-PATH TRANSMISSION LOSS -->
+  ${isThroughPath ? `
+    ${secHead("5. Transmission Loss")}
+    ${path==="through_wall" ? kvTable([
+      ["Wall Description", tp.wall_label],
+      ["Wall STC",         !skipN(tp.wall_stc)?`${tp.wall_stc} dB`:null],
+    ]) : ""}
+    ${path==="through_door" ? kvTable([
+      ["Door Description", tp.door_label],
+      ["Door STC",         !skipN(tp.door_stc)?`${tp.door_stc} dB`:null],
+    ]) : ""}
+    ${["through_ceiling_above","through_ceiling_below"].includes(path) ? kvTable([
+      ["Ceiling Description", tp.ceiling_label],
+      ["Ceiling STC",         !skipN(tp.ceiling_stc)?`${tp.ceiling_stc} dB`:null],
+    ]) : ""}
+    ${wallTL && wallTL.some(v=>v>0) ? bandTable([["Wall TL (dB)",...wallTL.map(v=>fmt(v))]],false) : ""}
+    ${doorTL && doorTL.some(v=>v>0) ? bandTable([["Door TL (dB)",...doorTL.map(v=>fmt(v))]],false) : ""}
+    ${ceilTL && ceilTL.some(v=>v>0) ? bandTable([["Ceiling TL (dB)",...ceilTL.map(v=>fmt(v))]],false) : ""}
+  ` : ""}
+
+  <!-- 6. SPACE / ROOM or DISTANCE EFFECT -->
+  ${secHead("6. Propagation")}
+  ${useRoom ? kvTable([
+    ["Propagation Method", "Space / Room (Schultz)"],
+    ["Room Length",   !skipN(room.length_m)?`${room.length_m} m`:null],
+    ["Room Width",    !skipN(room.width_m) ?`${room.width_m} m`:null],
+    ["Room Height",   !skipN(room.height_m)?`${room.height_m} m`:null],
+    ["Distance (m)",  !skipN(room.distance_m)?`${room.distance_m} m`:null],
+  ]) : kvTable([
+    ["Propagation Method", "Free Field / Distance Effect"],
+    ["Distance",   !skipN(de.distance_m)?`${de.distance_m} m`:null],
+    ["Directivity", !skipN(de.directivity)?String(de.directivity):null],
+  ])}
+
+  <!-- 7. ATTENUATOR -->
+  ${hasAtt ? `
+    ${secHead("7. Attenuator")}
+    ${kvTable([
+      ["Model",           att.model],
+      ["Width × Height",  !skipN(att.width_mm)?`${att.width_mm} × ${att.height_mm} mm`:null],
+      ["Length",          !skipN(att.length_mm)?`${att.length_mm} mm`:null],
+      ["Pressure Drop",   !skipN(att.pressureDrop_pa)?`${att.pressureDrop_pa} Pa`:null],
+    ])}
+    ${bandTable([["Attenuator IL (dB)",...attILArr.map(v=>fmt(v))]],false)}
+  ` : ""}
+
+  <!-- 8. ROCKWOOL / ROOM VOLUME CORRECTION -->
+  ${isRockwoolPath && (!skipN(rw.length_m)||!skipN(rw.width_m)||!skipN(rw.height_m)) ? `
+    ${secHead("8. Room Volume Correction (Rockwool)")}
+    ${kvTable([
+      ["Type",        rw.type],
+      ["Room Length", !skipN(rw.length_m)?`${rw.length_m} m`:null],
+      ["Room Width",  !skipN(rw.width_m) ?`${rw.width_m} m`:null],
+      ["Room Height", !skipN(rw.height_m)?`${rw.height_m} m`:null],
+      ["α 63 Hz",    rw.alpha?.hz63!=null?String(rw.alpha.hz63):null],
+      ["α 125 Hz",   rw.alpha?.hz125!=null?String(rw.alpha.hz125):null],
+      ["α 250 Hz",   rw.alpha?.hz250!=null?String(rw.alpha.hz250):null],
+      ["α 500 Hz",   rw.alpha?.hz500!=null?String(rw.alpha.hz500):null],
+      ["α 1000 Hz",  rw.alpha?.hz1000!=null?String(rw.alpha.hz1000):null],
+    ])}
+    ${hasRVC ? bandTable([["RVC per Band (dB)",...rvcArr.map(v=>fmt(v))]],false) : ""}
+  ` : ""}
+
+  <!-- 9. RECEIVER -->
+  ${secHead("9. Receiver / Design Criteria")}
+  ${kvTable([
+    ["Receiver Description", rec.description],
+    ["Distance to Receiver", !skipN(rec.distance_m)?`${rec.distance_m} m`:null],
+    ["Directivity Factor",   !skipN(rec.directivity)?String(rec.directivity):null],
+    ["Noise Criterion",      rec.ncNrChoice||"NC"],
+    ["Required NC",          rec.ncNrChoice==="NC"&&!skipN(rec.requiredNC)?`NC ${rec.requiredNC}`:null],
+    ["Required NR",          rec.ncNrChoice==="NR"&&!skipN(rec.requiredNR)?`NR ${rec.requiredNR}`:null],
+    ["Required dB(A)",       rec.ncNrChoice==="dBA"&&!skipN(rec.required_dba)?`${rec.required_dba} dB(A)`:null],
+  ])}
+
+  <!-- 10. CALCULATED Lp AT RECEIVER (per band) -->
+  ${actualVals && actualVals.some(v=>v!==0) ? `
+    ${secHead("10. Calculated Lp at Receiver (per band)")}
+    ${bandTable([["Total Lp at Receiver (dB)",...actualVals.map(v=>fmt2(v))]],false)}
+  ` : ""}
+
+  <!-- 11. NC RESULT -->
+  ${ncSection ? resultSec(ncSection) : ""}
+
+  <!-- 12. NR RESULT -->
+  ${nrSection ? resultSec(nrSection) : ""}
+
+  <!-- 13. dB(A) RESULT -->
+  ${dbaSection ? resultSec(dbaSection) : ""}
+
+  <!-- FOOTER -->
+  <div style="margin-top:36px;padding-top:12px;border-top:1px solid #E2E8F0;font-size:10px;color:#94A3B8;text-align:center;">
+    Generated by DG-SARIA Acoustic Calculator &nbsp;·&nbsp; AAPL Consultants &nbsp;·&nbsp; ${dateStr}
+  </div>
+
+</div></body></html>`;
+}
+
 async function downloadPDF(form, liveLp, project) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
@@ -1370,9 +1676,10 @@ async function downloadWord(form, liveLp, project) {
   URL.revokeObjectURL(url);
 }
 
-/* ── Download Modal ──────────────────────────────────────── */
+/* ── Preview + Download Modal ────────────────────────────── */
 function DownloadModal({ onClose, form, liveLp, project }) {
   const [loading, setLoading] = useState(null); // "pdf"|"word"
+  const htmlReport = useMemo(() => buildHTMLReport(form, liveLp, project), [form, liveLp, project]);
 
   const handle = async (type) => {
     setLoading(type);
@@ -1388,50 +1695,69 @@ function DownloadModal({ onClose, form, liveLp, project }) {
   };
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.45)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center" }}
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.55)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center", padding:"16px" }}
       onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{ background:"#fff", borderRadius:16, padding:"28px 28px 24px", width:360, boxShadow:"0 20px 60px rgba(0,0,0,.25)", fontFamily:"Inter,sans-serif" }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
+      <div style={{ background:"#fff", borderRadius:18, width:"min(960px,98vw)", maxHeight:"95vh", display:"flex", flexDirection:"column", boxShadow:"0 24px 80px rgba(0,0,0,.35)", fontFamily:"Inter,sans-serif", overflow:"hidden" }}>
+
+        {/* Header */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"18px 24px 16px", borderBottom:"1.5px solid #E2E8F0", flexShrink:0 }}>
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ width:36, height:36, borderRadius:10, background:"#E3F8F5", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <Download size={18} color="#0E9F8E"/>
+            <div style={{ width:36, height:36, borderRadius:10, background:"#EEF2FF", display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <FileText size={18} color="#6366F1"/>
             </div>
-            <span style={{ fontSize:15, fontWeight:700, color:"#0F172A", fontFamily:"Plus Jakarta Sans,sans-serif" }}>Download Report</span>
+            <div>
+              <div style={{ fontSize:15, fontWeight:700, color:"#0F172A", fontFamily:"Plus Jakarta Sans,sans-serif" }}>Report Preview</div>
+              <div style={{ fontSize:11, color:"#94A3B8", marginTop:1 }}>Review before downloading</div>
+            </div>
           </div>
-          <button onClick={onClose} type="button" style={{ background:"none", border:"none", cursor:"pointer", color:"#94A3B8", fontSize:18, lineHeight:1 }}>✕</button>
+          <button onClick={onClose} type="button" style={{ background:"none", border:"none", cursor:"pointer", color:"#94A3B8", fontSize:20, lineHeight:1, padding:"4px 8px" }}>✕</button>
         </div>
-        <p style={{ fontSize:12.5, color:"#64748B", margin:"0 0 20px" }}>
-          Choose format — includes project details, all calculations and summary tables. No equations.
-        </p>
-        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-          <button type="button" disabled={!!loading} onClick={()=>handle("pdf")}
-            style={{ display:"flex", alignItems:"center", gap:12, padding:"13px 16px", borderRadius:10, border:"1.5px solid #FECDD3", background:"#FFF1F2", cursor:loading?"not-allowed":"pointer", transition:"all .15s" }}
-            onMouseEnter={e=>{if(!loading){e.currentTarget.style.background="#FFE4E6";e.currentTarget.style.borderColor="#FB7185";}}}
-            onMouseLeave={e=>{e.currentTarget.style.background="#FFF1F2";e.currentTarget.style.borderColor="#FECDD3";}}>
-            <div style={{ width:38, height:38, borderRadius:9, background:"#FEE2E2", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-              {loading==="pdf" ? <Loader2 size={18} color="#E11D48" style={{animation:"spin .7s linear infinite"}}/> : <FileText size={18} color="#E11D48"/>}
-            </div>
-            <div style={{ textAlign:"left" }}>
-              <div style={{ fontSize:13.5, fontWeight:700, color:"#0F172A" }}>PDF Document</div>
-              <div style={{ fontSize:11, color:"#94A3B8", marginTop:2 }}>A4 layout, all sections, printable</div>
-            </div>
-          </button>
-          <button type="button" disabled={!!loading} onClick={()=>handle("word")}
-            style={{ display:"flex", alignItems:"center", gap:12, padding:"13px 16px", borderRadius:10, border:"1.5px solid #BFDBFE", background:"#EFF6FF", cursor:loading?"not-allowed":"pointer", transition:"all .15s" }}
-            onMouseEnter={e=>{if(!loading){e.currentTarget.style.background="#DBEAFE";e.currentTarget.style.borderColor="#60A5FA";}}}
-            onMouseLeave={e=>{e.currentTarget.style.background="#EFF6FF";e.currentTarget.style.borderColor="#BFDBFE";}}>
-            <div style={{ width:38, height:38, borderRadius:9, background:"#DBEAFE", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-              {loading==="word" ? <Loader2 size={18} color="#1D4ED8" style={{animation:"spin .7s linear infinite"}}/> : <FileIcon size={18} color="#1D4ED8"/>}
-            </div>
-            <div style={{ textAlign:"left" }}>
-              <div style={{ fontSize:13.5, fontWeight:700, color:"#0F172A" }}>Word Document</div>
-              <div style={{ fontSize:11, color:"#94A3B8", marginTop:2 }}>Editable .docx with tables</div>
-            </div>
-          </button>
+
+        {/* Preview iframe */}
+        <div style={{ flex:1, overflow:"hidden", background:"#F1F5F9", padding:"0" }}>
+          <iframe
+            srcDoc={htmlReport}
+            title="Report Preview"
+            style={{ width:"100%", height:"100%", border:"none", minHeight:"500px" }}
+            sandbox="allow-same-origin"
+          />
         </div>
-        <p style={{ fontSize:10.5, color:"#CBD5E1", margin:"16px 0 0", textAlign:"center" }}>
-          Libraries load on first use — may take a moment
-        </p>
+
+        {/* Download buttons */}
+        <div style={{ padding:"16px 24px 20px", borderTop:"1.5px solid #E2E8F0", flexShrink:0, background:"#FAFAFA" }}>
+          <p style={{ fontSize:11.5, color:"#64748B", margin:"0 0 12px", textAlign:"center" }}>
+            Choose format to download — includes all calculations, octave band tables and NC/NR/dB(A) results
+          </p>
+          <div style={{ display:"flex", gap:10, justifyContent:"center", flexWrap:"wrap" }}>
+            <button type="button" disabled={!!loading} onClick={()=>handle("pdf")}
+              style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 20px", borderRadius:10, border:"1.5px solid #FECDD3", background:"#FFF1F2", cursor:loading?"not-allowed":"pointer", transition:"all .15s", minWidth:160 }}
+              onMouseEnter={e=>{if(!loading){e.currentTarget.style.background="#FFE4E6";e.currentTarget.style.borderColor="#FB7185";}}}
+              onMouseLeave={e=>{e.currentTarget.style.background="#FFF1F2";e.currentTarget.style.borderColor="#FECDD3";}}>
+              <div style={{ width:34, height:34, borderRadius:8, background:"#FEE2E2", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                {loading==="pdf" ? <Loader2 size={16} color="#E11D48" style={{animation:"spin .7s linear infinite"}}/> : <FileText size={16} color="#E11D48"/>}
+              </div>
+              <div style={{ textAlign:"left" }}>
+                <div style={{ fontSize:13, fontWeight:700, color:"#0F172A" }}>Download PDF</div>
+                <div style={{ fontSize:10.5, color:"#94A3B8", marginTop:1 }}>A4 · printable</div>
+              </div>
+            </button>
+            <button type="button" disabled={!!loading} onClick={()=>handle("word")}
+              style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 20px", borderRadius:10, border:"1.5px solid #BFDBFE", background:"#EFF6FF", cursor:loading?"not-allowed":"pointer", transition:"all .15s", minWidth:160 }}
+              onMouseEnter={e=>{if(!loading){e.currentTarget.style.background="#DBEAFE";e.currentTarget.style.borderColor="#60A5FA";}}}
+              onMouseLeave={e=>{e.currentTarget.style.background="#EFF6FF";e.currentTarget.style.borderColor="#BFDBFE";}}>
+              <div style={{ width:34, height:34, borderRadius:8, background:"#DBEAFE", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                {loading==="word" ? <Loader2 size={16} color="#1D4ED8" style={{animation:"spin .7s linear infinite"}}/> : <FileIcon size={16} color="#1D4ED8"/>}
+              </div>
+              <div style={{ textAlign:"left" }}>
+                <div style={{ fontSize:13, fontWeight:700, color:"#0F172A" }}>Download Word</div>
+                <div style={{ fontSize:10.5, color:"#94A3B8", marginTop:1 }}>Editable .docx</div>
+              </div>
+            </button>
+          </div>
+          <p style={{ fontSize:10.5, color:"#CBD5E1", margin:"10px 0 0", textAlign:"center" }}>
+            Libraries load on first use — may take a moment
+          </p>
+        </div>
       </div>
     </div>
   );
