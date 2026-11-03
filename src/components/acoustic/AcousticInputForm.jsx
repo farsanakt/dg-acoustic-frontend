@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { createCalculationApi, updateCalculationApi, runCalculationApi } from "@/api/calculationApi";
-import { DownloadModal } from "./AcousticReportDownload";
+import { DownloadModal } from '../../components/acoustic/Acousticreportdownload';
 
 const BANDS     = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
 const BAND_KEYS = ["hz63","hz125","hz250","hz500","hz1000","hz2000","hz4000","hz8000"];
