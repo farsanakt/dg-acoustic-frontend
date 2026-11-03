@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { createCalculationApi, updateCalculationApi, runCalculationApi } from "@/api/calculationApi";
+import { DownloadModal } from "./AcousticReportDownload";
 
 const BANDS     = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
 const BAND_KEYS = ["hz63","hz125","hz250","hz500","hz1000","hz2000","hz4000","hz8000"];
@@ -756,6 +757,13 @@ const NOISE_PATH_LABEL = {
   through_ceiling_above:"Through Ceiling Above", through_ceiling_below:"Through Ceiling Below",
 };
 
+/* ──────────────────────────────────────────────────────────────────────────
+   NOTE: buildReportSections, buildHTMLReport, downloadPDF, downloadWord,
+   and DownloadModal have been moved to AcousticReportDownload.jsx.
+   The DownloadModal is imported at the top of this file from that module.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* eslint-disable no-unused-vars */
 function buildReportSections(form, liveLp) {
   const NR_A = [55.4,35.5,22.0,12.0,4.8,0.0,-3.5,-6.1];
   const NR_B = [0.681,0.790,0.870,0.930,0.974,1.000,1.015,1.025];
@@ -881,302 +889,411 @@ function buildReportSections(form, liveLp) {
 function buildHTMLReport(form, liveLp, project) {
   const sections = buildReportSections(form, liveLp);
   const { ncSection, nrSection, dbaSection, attIL, rvcArr, actualVals } = sections;
-  const g    = form.generator    || {};
-  const rec  = form.receiver     || {};
-  const room = form.room         || {};
-  const de   = form.distanceEffect || {};
-  const erl  = form.erl          || {};
-  const att  = form.attenuator   || {};
-  const tp   = form.throughPath  || {};
-  const rw   = form.rockwool     || {};
+  // ── Classic Excel-style report ─────────────────────────────
+  const g     = form.generator      || {};
+  const rec   = form.receiver       || {};
+  const room  = form.room           || {};
+  const de    = form.distanceEffect || {};
+  const erl   = form.erl            || {};
+  const att   = form.attenuator     || {};
+  const tp    = form.throughPath    || {};
+  const rw    = form.rockwool       || {};
   const ducts = Array.isArray(form.ducts) ? form.ducts : [];
-  const path = form.noisePath;
+  const path      = form.noisePath;
   const pathLabel = NOISE_PATH_LABEL[path] || path;
-  const isDuctPath    = ["exhaust","intake"].includes(path);
-  const isThroughPath = ["through_wall","through_door","through_ceiling_above","through_ceiling_below"].includes(path);
+  const isDuctPath     = ["exhaust","intake"].includes(path);
+  const isThroughPath  = ["through_wall","through_door","through_ceiling_above","through_ceiling_below"].includes(path);
   const isRockwoolPath = ["through_wall","through_ceiling_above"].includes(path);
   const useRoom = form.roomOrDistance === "spaceRoom";
 
-  // ── helpers ───────────────────────────────────────────────
-  const skip  = v => v===undefined||v===null||v===""||v===0||v==="0"||v==="-"||v==="—";
-  const skipN = v => v===undefined||v===null||v===0||Number(v)===0;
-  const fmt   = v => (v===undefined||v===null) ? "-" : (typeof v==="number" ? (Number.isInteger(v)?String(v):v.toFixed(2)) : String(v));
-  const now   = new Date();
+  const skipN  = v => v===undefined||v===null||v===0||Number(v)===0||v===""||v==="-";
+  const fmtN   = v => { const n=Number(v); return (v===undefined||v===null||v===""||isNaN(n)||!isFinite(n)) ? "-" : n.toFixed(1); };
+  const fmtV   = v => (v===undefined||v===null||v==="") ? "-" : (typeof v==="number" ? (v===Math.round(v)?String(v):v.toFixed(1)) : String(v));
+  const now    = new Date();
   const dateStr = now.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
 
-  // ── simple key-value table (no band columns) ──────────────
-  const kvTable = (rows) => {
-    const visible = rows.filter(([,v])=>!skip(v));
-    if (!visible.length) return "";
-    return `<table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:4px;">
-      <tbody>${visible.map(([l,v],i)=>`
-        <tr style="background:${i%2===0?"#F8FAFC":"#fff"};">
-          <td style="padding:5px 10px;color:#64748B;font-weight:600;width:44%;border-bottom:1px solid #E2E8F0;">${l}</td>
-          <td style="padding:5px 10px;color:#0F172A;border-bottom:1px solid #E2E8F0;">${v}</td>
-        </tr>`).join("")}
-      </tbody>
-    </table>`;
+  // ── Re-compute intermediate calculation values ─────────────
+  const swlArr     = BAND_KEYS.map(k => Number(g.swl?.[k]) || 0);
+  const erlW       = Number(erl.width_mm)  || 0;
+  const erlH       = Number(erl.height_mm) || 0;
+  const erlArr     = (isDuctPath && (erlW>0||erlH>0)) ? (calcERL(erlW, erlH) || BAND_KEYS.map(()=>0)) : BAND_KEYS.map(()=>0);
+  const attILArr   = BAND_KEYS.map(k => Number(att.il?.[k]) || 0);
+  const hasAtt     = attILArr.some(v=>v!==0);
+
+  // Compute total duct IL (sum over all ducts)
+  let totalDuctILArr = BAND_KEYS.map(()=>0);
+  const ductRows = []; // per-duct breakdown rows for the path table
+  const ZERO8 = BAND_KEYS.map(()=>0);
+  if (isDuctPath) {
+    ducts.forEach((d, di) => {
+      const isLined = d.lining === "lined";
+      const straightRaw = isLined
+        ? calcLinedIL(d.width_mm, d.height_mm, d.length_m, d.liningThickness_in, d.coeffA)
+        : calcUnlinedIL(d.width_mm, d.height_mm, d.length_m);
+      const straightIL = straightRaw || ZERO8;
+      const elbRaw  = calcElbowIL(d.width_mm, d.elbows, isLined);
+      const elbIL   = elbRaw || ZERO8;
+      const ductTotal = BAND_KEYS.map((_,i) => (straightIL[i]||0) + (elbIL[i]||0));
+      totalDuctILArr  = totalDuctILArr.map((v,i)=>v+(ductTotal[i]||0));
+      const lbl = d.label || `Duct ${di+1}`;
+      const dimStr = `W=${d.width_mm||"-"}mm H=${d.height_mm||"-"}mm L=${d.length_m||"-"}m`;
+      if (straightIL.some(v=>v!==0)) ductRows.push({ label:`${lbl} IL (${isLined?"Lined":"Unlined"}) [${dimStr}]`, vals: straightIL });
+      if (elbIL.some(v=>v!==0))      ductRows.push({ label:`${lbl} Elbow IL (${d.elbows||0} elbows)`, vals: elbIL });
+    });
+  }
+
+  // Distance correction / propagation
+  // NOTE: calcDistanceEffect returns an OBJECT {hz63,hz125,...} — convert to array
+  let distCorrArr = BAND_KEYS.map(()=>0);
+  if (isDuctPath) {
+    // Fixed -5 dB at 1m, Q=4 for duct paths shown in sheet
+    distCorrArr = BAND_KEYS.map(()=>-5);
+  } else if (!useRoom) {
+    const deObj = calcDistanceEffect(Number(de.distance_m)||1, Number(de.directivity)||2);
+    distCorrArr = deObj ? BAND_KEYS.map(k => Number(deObj[k])||0) : BAND_KEYS.map(()=>0);
+  } else {
+    const S = liveSchultzOffsets(Number(room.length_m)||1,Number(room.width_m)||1,Number(room.height_m)||1,Number(room.distance_m)||1);
+    // liveSchultzOffsets already returns an array
+    distCorrArr = Array.isArray(S) ? S : (S ? BAND_KEYS.map(k=>Number(S[k])||0) : BAND_KEYS.map(()=>0));
+  }
+
+  // Through-path TL
+  const wallTLArr  = path==="through_wall"   ? BAND_KEYS.map(k=>Number(tp.wall_tl?.[k])||0) : null;
+  const doorTLArr  = path==="through_door"   ? BAND_KEYS.map(k=>Number(tp.door_tl?.[k])||0) : null;
+  const ceilTLArr  = ["through_ceiling_above","through_ceiling_below"].includes(path)
+                     ? BAND_KEYS.map(k=>Number(tp.ceiling_bands?.[k])||0) : null;
+  const tlArr      = wallTLArr || doorTLArr || ceilTLArr || BAND_KEYS.map(()=>0);
+  const hasTL      = tlArr.some(v=>v!==0);
+
+  // RVC (Rockwool Volume Correction)
+  const rvcBands  = rvcArr || BAND_KEYS.map(()=>0);
+  const hasRVC    = isRockwoolPath && rvcBands.some(v=>v!==0);
+
+  // A-Weighting
+  const aWeightArr = A_WEIGHT; // [-26.2,-16.1,-8.6,-3.2,0,1.2,1.0,-1.1]
+
+  // Lp WITHOUT attenuator (actualVals from buildReportSections = liveLp + attIL)
+  const lpWithout = actualVals || BAND_KEYS.map(()=>0);
+  // Lp WITH attenuator = liveLp values
+  const lpWith    = BAND_KEYS.map(k => Number(liveLp[k]) || 0);
+
+  // Total dB(A) helper
+  const totalDBA = (lpBands) => {
+    const sum = lpBands.reduce((s,lp,i)=> s + Math.pow(10,((Number(lp)||0)+aWeightArr[i])/10), 0);
+    if (!sum || sum <= 0) return 0;
+    return 10*Math.log10(sum);
   };
+  const dbaWithout = totalDBA(lpWithout);
+  const dbaWith    = totalDBA(lpWith);
 
-  // ── band-column table (Parameter + 8 Hz cols + Total) ─────
-  const bandHead = (withTotal=true) => `<tr style="background:#1E293B;color:#fff;">
-    <th style="padding:6px 10px;text-align:left;font-size:11px;white-space:nowrap;">Parameter</th>
-    ${BANDS.map(b=>`<th style="padding:6px 5px;text-align:center;font-size:10.5px;">${b} Hz</th>`).join("")}
-    ${withTotal?`<th style="padding:6px 8px;text-align:center;font-size:10.5px;">Total</th>`:""}
-  </tr>`;
+  // Required noise level
+  const ncNrChoice  = rec.ncNrChoice || "dBA";
+  let reqLevelLabel = "";
+  let reqLevelVal   = "";
+  if (ncNrChoice==="NC")  { reqLevelLabel="Required NC Level";   reqLevelVal = !skipN(rec.requiredNC)  ? `NC ${rec.requiredNC}` : "-"; }
+  if (ncNrChoice==="NR")  { reqLevelLabel="Required NR Level";   reqLevelVal = !skipN(rec.requiredNR)  ? `NR ${rec.requiredNR}` : "-"; }
+  if (ncNrChoice==="dBA") { reqLevelLabel="Required Noise Level (dB(A))"; reqLevelVal = !skipN(rec.required_dba) ? `${rec.required_dba} dB(A)` : "-"; }
 
-  const bandTable = (rows, withTotal=true) => {
-    if (!rows||!rows.length) return "";
-    return `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:4px;">
-      <thead>${bandHead(withTotal)}</thead>
-      <tbody>${rows.filter(r=>r).map((r,ri)=>{
-        const [label,...vals] = r;
-        const isYellow = label&&(label.includes("Additional")||label.includes("Reduction Required"));
-        const isGreen  = label&&label.includes("Required Noise");
-        const bg  = isYellow?"#FEFCE8":isGreen?"#F0FDF4":(ri%2===0?"#F8FAFC":"#fff");
-        const col = isYellow?"#92400E":isGreen?"#14532D":"#0F172A";
-        const fw  = isYellow||ri===0?"700":"400";
-        return `<tr style="background:${bg};">
-          <td style="padding:5px 10px;color:${col};font-weight:${fw};border-bottom:1px solid #E2E8F0;white-space:nowrap;">${label}</td>
-          ${vals.map(v=>`<td style="padding:5px 5px;text-align:center;color:${col};font-weight:${fw};border-bottom:1px solid #E2E8F0;">${v??"-"}</td>`).join("")}
-        </tr>`;
-      }).join("")}</tbody>
-    </table>`;
-  };
+  // Additional reduction required (dB(A))
+  const reqDBA = Number(rec.required_dba) || Number(rec.requiredNC) || Number(rec.requiredNR) || 0;
+  const additionalReductionWithout = dbaWithout - reqDBA;
+  const additionalReductionWith    = dbaWith    - reqDBA;
 
-  // ── section heading ────────────────────────────────────────
-  const secHead = (title,color="#6366F1") =>
-    `<div style="font-size:13px;font-weight:700;color:#1E293B;margin:22px 0 8px;padding-bottom:5px;border-bottom:2px solid ${color};">${title}</div>`;
+  // ── CSS helpers ────────────────────────────────────────────
+  const TD  = (content,extra="") => `<td style="border:1px solid #999;padding:3px 6px;font-size:10pt;${extra}">${content}</td>`;
+  const TDC = (content,extra="") => TD(content,`text-align:center;${extra}`);
+  const TH  = (content,extra="") => `<th style="border:1px solid #999;padding:3px 6px;font-size:10pt;background:#d9d9d9;font-weight:bold;${extra}">${content}</th>`;
+  const THC = (content,extra="") => TH(content,`text-align:center;${extra}`);
 
-  const badge = (txt) => {
-    if (!txt) return "";
-    const bad = txt.includes("✗");
-    return `<div style="margin:6px 0 10px;padding:6px 12px;border-radius:6px;background:${bad?"#FEE2E2":"#DCFCE7"};color:${bad?"#991B1B":"#14532D"};font-size:11.5px;font-weight:600;">${txt}</div>`;
-  };
+  // Band header row (8 octave band columns)
+  const bandHdrRow = (leadCols) => `<tr>${leadCols.map(c=>TH(c)).join("")}${BANDS.map(b=>THC(b)).join("")}</tr>`;
 
-  // ── result section (NC/NR/dBA) with optional treatment ────
-  const resultSec = (sec) => {
-    if (!sec) return "";
-    return `${secHead(sec.title,"#6366F1")}
-      ${bandTable(sec.rows, sec.title&&sec.title.includes("dB(A)") ? true : false)}
-      ${badge(sec.badge)}
-      ${sec.treatment ? `
-        <div style="font-size:12px;font-weight:600;color:#1E293B;margin:10px 0 4px;">With Acoustic Treatment</div>
-        ${bandTable(sec.treatment.rows, sec.title&&sec.title.includes("dB(A)") ? true : false)}
-        ${badge(sec.treatment.badge)}` : ""}`;
-  };
-
-  // ── SWL per band ──────────────────────────────────────────
-  const swlBands = BAND_KEYS.map(k => g.swl?.[k] ?? 0);
-  const rawBands = BAND_KEYS.map(k => g.rawBand?.[k] ?? 0);
-  const hasSwl   = swlBands.some(v=>v!==0);
-  const hasRaw   = rawBands.some(v=>v!==0);
-
-  // ── Duct IL summary per duct ──────────────────────────────
-  const ductSections = isDuctPath ? ducts.map((d,di)=>{
-    const lbl = d.label||`Duct ${di+1}`;
-    const rows = [];
-    // straight lined
-    const linedIL = BAND_KEYS.map(k=>Number(d.lined?.il?.[k])||0);
-    if (linedIL.some(v=>v>0)) rows.push(["Lined Duct IL (dB)",...linedIL.map(v=>fmt(v))]);
-    // straight unlined
-    const unlinedIL = BAND_KEYS.map(k=>Number(d.unlined?.il?.[k])||0);
-    if (unlinedIL.some(v=>v>0)) rows.push(["Unlined Duct IL (dB)",...unlinedIL.map(v=>fmt(v))]);
-    // elbow
-    const elbowIL = BAND_KEYS.map(k=>Number(d.elbow?.il?.[k])||0);
-    if (elbowIL.some(v=>v>0)) rows.push(["Elbow IL (dB)",...elbowIL.map(v=>fmt(v))]);
-    // end reflection
-    const erlIL = BAND_KEYS.map(k=>Number(d.erl?.il?.[k])||0);
-    if (erlIL.some(v=>v>0)) rows.push(["End Reflection Loss (dB)",...erlIL.map(v=>fmt(v))]);
-    // total duct IL
-    const totalIL = BAND_KEYS.map((_,i)=>linedIL[i]+unlinedIL[i]+elbowIL[i]+erlIL[i]);
-    if (rows.length>1) rows.push(["Total Duct IL (dB)",...totalIL.map(v=>fmt(v))]);
-    // duct info kv
-    const kvRows = [];
-    if (!skip(d.label)) kvRows.push(["Label", d.label]);
-    if (!skipN(d.lined?.length_m)) kvRows.push(["Lined Length", `${d.lined.length_m} m`]);
-    if (!skipN(d.lined?.width_mm))  kvRows.push(["Lined Width × Height", `${d.lined.width_mm} × ${d.lined.height_mm} mm`]);
-    if (!skipN(d.unlined?.length_m)) kvRows.push(["Unlined Length", `${d.unlined.length_m} m`]);
-    if (!skipN(d.unlined?.width_mm)) kvRows.push(["Unlined Width × Height", `${d.unlined.width_mm} × ${d.unlined.height_mm} mm`]);
-    if (!skipN(d.elbow?.count))      kvRows.push(["Elbows", `${d.elbow.count} × (${d.elbow.lined?"Lined":"Unlined"}, ${d.elbow.width_mm} mm wide)`]);
-    return { lbl, kvRows, rows };
-  }).filter(ds=>ds.rows.length||ds.kvRows.length) : [];
-
-  // ── through-path TL ───────────────────────────────────────
-  const wallTL    = path==="through_wall"    ? (BAND_KEYS.map(k=>Number(tp.wall_tl?.[k])||0))   : null;
-  const doorTL    = path==="through_door"    ? (BAND_KEYS.map(k=>Number(tp.door_tl?.[k])||0))   : null;
-  const ceilTL    = ["through_ceiling_above","through_ceiling_below"].includes(path)
-                    ? (BAND_KEYS.map(k=>Number(tp.ceiling_bands?.[k])||0)) : null;
-
-  // ── attenuator ────────────────────────────────────────────
-  const attILArr = BAND_KEYS.map(k=>Number(att.il?.[k])||0);
-  const hasAtt   = attILArr.some(v=>v>0);
-
-  // ── rockwool RVC ──────────────────────────────────────────
-  const hasRVC   = isRockwoolPath && rvcArr && rvcArr.some(v=>v!==0);
-
-  // ── ERL ───────────────────────────────────────────────────
-  const erlW = Number(erl.width_mm)||0;
-  const erlH = Number(erl.height_mm)||0;
+  // A data row with 8 band values
+  const bandDataRow = (leadCells, vals, extra="") =>
+    `<tr>${leadCells.map(c=>TD(c)).join("")}${vals.map(v=>TDC(fmtN(v),extra)).join("")}</tr>`;
 
   // ═══════════════ BUILD HTML ═══════════════════════════════
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Acoustic Calculation Report</title>
   <style>
-    *{box-sizing:border-box;}
-    body{margin:0;padding:0;font-family:'Segoe UI',Arial,sans-serif;background:#F1F5F9;color:#0F172A;}
-    .page{max-width:900px;margin:0 auto;background:#fff;padding:32px 36px 52px;}
-    @media print{body{background:#fff;}.page{padding:20px 24px;}}
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:"Times New Roman",Times,serif;background:#fff;color:#000;font-size:10pt;}
+    .page{max-width:960px;margin:0 auto;padding:28px 36px 48px;}
+    table{border-collapse:collapse;width:100%;}
+    td,th{border:1px solid #999;padding:3px 6px;font-size:10pt;vertical-align:middle;}
+    .sec-title{font-size:11pt;font-weight:bold;margin:18px 0 6px;text-decoration:underline;}
+    .note{font-size:9.5pt;font-style:italic;color:#333;margin:4px 0;}
+    @media print{body{background:#fff;}.page{padding:18px 22px;}}
   </style>
 </head><body><div class="page">
 
-  <!-- HEADER -->
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:14px;border-bottom:3px solid #6366F1;">
-    <div>
-      <div style="font-size:20px;font-weight:800;color:#1E293B;letter-spacing:-0.5px;">Acoustic Calculation Report</div>
-      <div style="font-size:11.5px;color:#64748B;margin-top:3px;">AAPL Consultants / DG-SARIA &nbsp;·&nbsp; ${dateStr}</div>
-    </div>
-    <div style="text-align:right;font-size:11px;color:#64748B;line-height:1.7;">
-      ${project?.name?`<div style="font-weight:700;color:#334155;font-size:12px;">${project.name}</div>`:""}
-      ${project?.client?`<div>${project.client}</div>`:""}
-      <div>Path: <strong>${pathLabel}</strong></div>
-    </div>
+  <!-- ══════ HEADER ══════ -->
+  <div style="text-align:center;margin-bottom:16px;">
+    <div style="font-size:14pt;font-weight:bold;letter-spacing:0.5px;">ACOUSTIC CALCULATION REPORT</div>
+    <div style="font-size:10pt;color:#333;margin-top:4px;">AAPL Consultants / DG-SARIA &nbsp;·&nbsp; ${dateStr}</div>
   </div>
 
-  <!-- 1. EQUIPMENT & PROJECT DETAILS -->
-  ${secHead("1. Equipment & Project Details")}
-  ${kvTable([
-    ["Project Name",         project?.name],
-    ["Client",               project?.client],
-    ["Equipment ID",         g.equipmentId],
-    ["Model Number",         g.modelNumber],
-    ["Rated kVA",            g.ratedKva ? `${g.ratedKva} kVA` : null],
-    ["Building Ref",         g.buildingRef],
-    ["Noise Path",           pathLabel],
-    ["Noise Input Type",     g.noiseInputType],
-    ["Measurement Distance", !skipN(g.measurementDistance_m) ? `${g.measurementDistance_m} m` : null],
-    ["Overall SWL dB(A)",    !skipN(g.swl_dba) ? `${g.swl_dba} dB(A)` : null],
-  ])}
+  <!-- ══════ 1. EQUIPMENT INFO (2-col label/value) ══════ -->
+  <table style="width:100%;margin-bottom:12px;">
+    <tbody>
+      <tr>
+        ${TD("<b>Equipment ID</b>",  "width:18%;background:#f2f2f2;")} ${TD(g.equipmentId||"-","width:32%;")}
+        ${TD("<b>Noise Path</b>",    "width:18%;background:#f2f2f2;")} ${TD(pathLabel||"-","width:32%;")}
+      </tr>
+      <tr>
+        ${TD("<b>Model Number</b>",  "background:#f2f2f2;")} ${TD(g.modelNumber||"-")}
+        ${TD("<b>Building Ref</b>",  "background:#f2f2f2;")} ${TD(g.buildingRef||"-")}
+      </tr>
+      <tr>
+        ${TD("<b>Receiver Location</b>","background:#f2f2f2;")} ${TD(rec.description||"-")}
+        ${TD("<b>Rated kVA</b>",     "background:#f2f2f2;")} ${TD(g.ratedKva?`${g.ratedKva} kVA`:"-")}
+      </tr>
+      ${project?.name||project?.client ? `<tr>
+        ${TD("<b>Project</b>","background:#f2f2f2;")} ${TD(project?.name||"-")}
+        ${TD("<b>Client</b>","background:#f2f2f2;")} ${TD(project?.client||"-")}
+      </tr>`:""}
+    </tbody>
+  </table>
 
-  <!-- 2. GENERATOR NOISE (SWL per band) -->
-  ${(hasSwl||hasRaw) ? `
-    ${secHead("2. Generator Noise Input")}
-    ${hasRaw ? bandTable([["Raw Input per Band (dB)",...rawBands.map(v=>fmt(v))]],false) : ""}
-    ${hasSwl ? bandTable([["Sound Power Level SWL (dB)",...swlBands.map(v=>fmt(v))]],false) : ""}
-  ` : ""}
+  <!-- ══════ 2. SOUND POWER LEVELS ══════ -->
+  <div class="sec-title">The sound power levels for the equipment unit:</div>
+  <table style="margin-bottom:6px;">
+    <thead><tr>${THC("Band (Hz)","width:20%;")}${BANDS.map(b=>THC(b)).join("")}</tr></thead>
+    <tbody>
+      ${swlArr.some(v=>v!==0)?`<tr>${TD("Sound Power Level, Lw (dB)","background:#f2f2f2;")}${swlArr.map(v=>TDC(fmtN(v))).join("")}</tr>`:""}
+    </tbody>
+  </table>
+  ${!skipN(g.swl_dba)?`<div class="note">Overall Sound Power Level: <b>${g.swl_dba} dB(A)</b></div>`:""}
+  ${g.noiseInputType?`<div class="note">Input type: ${g.noiseInputType}${!skipN(g.measurementDistance_m)?` at ${g.measurementDistance_m} m`:""}</div>`:""}
 
-  <!-- 3. DUCT SECTIONS (exhaust / intake paths) -->
-  ${isDuctPath && ductSections.length ? `
-    ${secHead("3. Duct Attenuation")}
-    ${ductSections.map((ds,i)=>`
-      ${ductSections.length>1?`<div style="font-size:12px;font-weight:600;color:#475569;margin:10px 0 5px;">${ds.lbl}</div>`:""}
-      ${kvTable(ds.kvRows)}
-      ${bandTable(ds.rows,false)}
-    `).join("")}
-  ` : ""}
+  <!-- ══════ 3. PATH 1 CALCULATION TABLE ══════ -->
+  <div class="sec-title" style="margin-top:20px;">Path 1 — ${pathLabel}</div>
+  <table style="margin-bottom:6px;">
+    <thead>
+      <tr>
+        ${TH("Parameter","width:24%;")}
+        ${isDuctPath||isThroughPath?TH("Dimensions","width:14%;text-align:center;"):""}
+        ${BANDS.map(b=>THC(b)).join("")}
+      </tr>
+    </thead>
+    <tbody>
+      <!-- SWL -->
+      <tr style="background:#f9f9f9;">
+        ${TD("<b>Generator Sound Power Level, Lw (dB)</b>")}
+        ${isDuctPath||isThroughPath?TDC(g.ratedKva?`${g.ratedKva} kVA`:""):""}
+        ${swlArr.map(v=>TDC(`<b>${fmtN(v)}</b>`)).join("")}
+      </tr>
 
-  <!-- 4. END REFLECTION LOSS -->
-  ${isDuctPath && !skipN(erlW) && !skipN(erlH) ? `
-    ${secHead("4. End Reflection Loss")}
-    ${kvTable([
-      ["ERL Opening Width",  `${erlW} mm`],
-      ["ERL Opening Height", `${erlH} mm`],
-    ])}
-  ` : ""}
+      <!-- Per-duct IL rows -->
+      ${isDuctPath && ductRows.length ? ductRows.map(dr=>`
+      <tr>
+        ${TD(`&minus; ${dr.label}`)}
+        ${TDC("")}
+        ${dr.vals.map(v=>TDC(v!==0?`(${fmtN(Math.abs(v))})`:"-")).join("")}
+      </tr>`).join("") : ""}
 
-  <!-- 5. THROUGH-PATH TRANSMISSION LOSS -->
-  ${isThroughPath ? `
-    ${secHead("5. Transmission Loss")}
-    ${path==="through_wall" ? kvTable([
-      ["Wall Description", tp.wall_label],
-      ["Wall STC",         !skipN(tp.wall_stc)?`${tp.wall_stc} dB`:null],
-    ]) : ""}
-    ${path==="through_door" ? kvTable([
-      ["Door Description", tp.door_label],
-      ["Door STC",         !skipN(tp.door_stc)?`${tp.door_stc} dB`:null],
-    ]) : ""}
-    ${["through_ceiling_above","through_ceiling_below"].includes(path) ? kvTable([
-      ["Ceiling Description", tp.ceiling_label],
-      ["Ceiling STC",         !skipN(tp.ceiling_stc)?`${tp.ceiling_stc} dB`:null],
-    ]) : ""}
-    ${wallTL && wallTL.some(v=>v>0) ? bandTable([["Wall TL (dB)",...wallTL.map(v=>fmt(v))]],false) : ""}
-    ${doorTL && doorTL.some(v=>v>0) ? bandTable([["Door TL (dB)",...doorTL.map(v=>fmt(v))]],false) : ""}
-    ${ceilTL && ceilTL.some(v=>v>0) ? bandTable([["Ceiling TL (dB)",...ceilTL.map(v=>fmt(v))]],false) : ""}
-  ` : ""}
+      <!-- Total Duct IL (if multiple ducts) -->
+      ${isDuctPath && ducts.length>1 ? `<tr style="background:#f0f0f0;">
+        ${TD("<b>&minus; Total Duct Insertion Loss (dB)</b>")}
+        ${TDC("")}
+        ${totalDuctILArr.map(v=>TDC(`<b>(${fmtN(Math.abs(v))})</b>`)).join("")}
+      </tr>` : ""}
 
-  <!-- 6. SPACE / ROOM or DISTANCE EFFECT -->
-  ${secHead("6. Propagation")}
-  ${useRoom ? kvTable([
-    ["Propagation Method", "Space / Room (Schultz)"],
-    ["Room Length",   !skipN(room.length_m)?`${room.length_m} m`:null],
-    ["Room Width",    !skipN(room.width_m) ?`${room.width_m} m`:null],
-    ["Room Height",   !skipN(room.height_m)?`${room.height_m} m`:null],
-    ["Distance (m)",  !skipN(room.distance_m)?`${room.distance_m} m`:null],
-  ]) : kvTable([
-    ["Propagation Method", "Free Field / Distance Effect"],
-    ["Distance",   !skipN(de.distance_m)?`${de.distance_m} m`:null],
-    ["Directivity", !skipN(de.directivity)?String(de.directivity):null],
-  ])}
+      <!-- ERL -->
+      ${isDuctPath && erlArr.some(v=>v!==0) ? `<tr>
+        ${TD(`&minus; End Reflection Loss (ERL) [W=${erlW}mm, H=${erlH}mm]`)}
+        ${TDC(`${erlW}×${erlH}mm`)}
+        ${erlArr.map(v=>TDC(v!==0?`(${fmtN(Math.abs(v))})`:"-")).join("")}
+      </tr>` : ""}
 
-  <!-- 7. ATTENUATOR -->
+      <!-- Distance correction / Propagation -->
+      ${distCorrArr.some(v=>v!==0) ? `<tr>
+        ${TD(isDuctPath ? "&minus; Distance Correction (1m, Q=4)" : useRoom ? `&minus; Room Effect (Schultz) [L=${room.length_m||"-"}m W=${room.width_m||"-"}m H=${room.height_m||"-"}m d=${room.distance_m||"-"}m]` : `&minus; Distance Effect [r=${de.distance_m||"-"}m, Q=${de.directivity||"-"}]`)}
+        ${isDuctPath||isThroughPath?TDC(isDuctPath&&!useRoom?"1m":""):""}
+        ${distCorrArr.map(v=>TDC(v!==0?`(${fmtN(Math.abs(v))})`:"-")).join("")}
+      </tr>` : ""}
+
+      <!-- Through-path TL -->
+      ${hasTL ? `<tr>
+        ${TD(`&minus; ${path==="through_wall"?"Wall":path==="through_door"?"Door":"Ceiling"} Transmission Loss`)}
+        ${TDC(path==="through_wall"?(tp.wall_stc?`STC ${tp.wall_stc}`:"-"):path==="through_door"?(tp.door_stc?`STC ${tp.door_stc}`:"-"):(tp.ceiling_stc?`STC ${tp.ceiling_stc}`:""))}
+        ${tlArr.map(v=>TDC(v!==0?`(${fmtN(Math.abs(v))})`:"-")).join("")}
+      </tr>` : ""}
+
+      <!-- RVC Rockwool -->
+      ${hasRVC ? `<tr>
+        ${TD(`&minus; Room Volume Correction (Rockwool)`)}
+        ${isThroughPath||isDuctPath?TDC(`${rw.length_m||"-"}×${rw.width_m||"-"}×${rw.height_m||"-"}m`):""}
+        ${rvcBands.map(v=>TDC(v!==0?`(${fmtN(Math.abs(v))})`:"-")).join("")}
+      </tr>` : ""}
+
+      <!-- A-Weighting row -->
+      <tr>
+        ${TD("A-Weighting Correction (dB)")}
+        ${isDuctPath||isThroughPath?TDC(""):""}
+        ${aWeightArr.map(v=>TDC(v>=0?`+${fmtN(v)}`:fmtN(v))).join("")}
+      </tr>
+
+      <!-- Room/space parameters (informational) -->
+      ${useRoom ? `
+      <tr style="background:#f5f5f5;">
+        ${TD("Room Dimensions (m)")}
+        ${isDuctPath||isThroughPath?TDC(""):""}
+        ${TDC(`L=${room.length_m||"-"} W=${room.width_m||"-"} H=${room.height_m||"-"}`, "font-size:9pt;")}
+        ${BANDS.slice(1).map(()=>TDC("")).join("")}
+      </tr>
+      <tr style="background:#f5f5f5;">
+        ${TD("Distance to Receiver (m)")}
+        ${isDuctPath||isThroughPath?TDC(""):""}
+        ${TDC(`${room.distance_m||"-"} m`)}
+        ${BANDS.slice(1).map(()=>TDC("")).join("")}
+      </tr>` : ""}
+
+      <!-- ── Resultant SPL WITHOUT attenuator (BOLD / highlighted) ── -->
+      <tr style="background:#fff2cc;">
+        ${TD("<b>Resultant SPL at Receiver &ndash; WITHOUT Sound Attenuator (dB)</b>","background:#fff2cc;font-weight:bold;")}
+        ${isDuctPath||isThroughPath?TDC("","background:#fff2cc;"):""}
+        ${lpWithout.map(v=>TDC(`<b>${fmtN(v)}</b>`,"background:#fff2cc;font-weight:bold;")).join("")}
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ══════ 4. COMBINATION OF PATH RESULTS ══════ -->
+  <div class="sec-title" style="margin-top:20px;">Combination of Path Results</div>
+  <table style="margin-bottom:6px;">
+    <thead>
+      <tr>
+        ${THC("PATH #","width:6%;")}
+        ${TH("Description","width:18%;")}
+        ${BANDS.map(b=>THC(b)).join("")}
+        ${THC("dB(A)")}
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Path 1 row -->
+      <tr>
+        ${TDC("1")}
+        ${TD(pathLabel)}
+        ${lpWithout.map(v=>TDC(fmtN(v))).join("")}
+        ${TDC(fmtN(dbaWithout))}
+      </tr>
+      <!-- Total Lp at receiver -->
+      <tr style="background:#f2f2f2;">
+        ${TDC("")}
+        ${TD("<b>Total Lp at Receiver Location (dB)</b>","font-weight:bold;")}
+        ${lpWithout.map(v=>TDC(`<b>${fmtN(v)}</b>`,"font-weight:bold;")).join("")}
+        ${TDC(`<b>${fmtN(dbaWithout)}</b>`,"font-weight:bold;")}
+      </tr>
+      <!-- Required noise level -->
+      <tr style="background:#f2f2f2;">
+        ${TDC("")}
+        ${TD(`<b>${reqLevelLabel}</b>`,"font-weight:bold;")}
+        ${BANDS.map(()=>TDC("")).join("")}
+        ${TDC(`<b>${reqLevelVal}</b>`,"font-weight:bold;")}
+      </tr>
+      <!-- Additional dB reduction required (yellow) -->
+      <tr style="background:#ffff00;">
+        ${TDC("")}
+        ${TD("<b>Additional dB Reduction Required</b>","font-weight:bold;background:#ffff00;")}
+        ${BANDS.map(()=>TDC("","background:#ffff00;")).join("")}
+        ${TDC(`<b>${additionalReductionWithout>0?fmtN(additionalReductionWithout):"0.0"}</b>`,"font-weight:bold;background:#ffff00;")}
+      </tr>
+      <!-- Calculated noise level WITHOUT attenuator (RED) -->
+      <tr style="background:#ffe0e0;">
+        ${TDC("")}
+        ${TD("<b>Calculated Noise Level Without Sound Attenuator (dB(A))</b>","font-weight:bold;color:#cc0000;background:#ffe0e0;")}
+        ${BANDS.map(()=>TDC("","background:#ffe0e0;")).join("")}
+        ${TDC(`<b style="color:#cc0000;">${fmtN(dbaWithout)}</b>`,"font-weight:bold;background:#ffe0e0;")}
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ══════ 5. ATTENUATOR (LAST) ══════ -->
   ${hasAtt ? `
-    ${secHead("7. Attenuator")}
-    ${kvTable([
-      ["Model",           att.model],
-      ["Width × Height",  !skipN(att.width_mm)?`${att.width_mm} × ${att.height_mm} mm`:null],
-      ["Length",          !skipN(att.length_mm)?`${att.length_mm} mm`:null],
-      ["Pressure Drop",   !skipN(att.pressureDrop_pa)?`${att.pressureDrop_pa} Pa`:null],
-    ])}
-    ${bandTable([["Attenuator IL (dB)",...attILArr.map(v=>fmt(v))]],false)}
+  <div class="sec-title" style="margin-top:20px;">Additional Measure: Adding Sound Attenuator</div>
+  <table style="margin-bottom:6px;">
+    <thead>
+      <tr>
+        <th style="border:1px solid #999;padding:3px 6px;background:#d9d9d9;font-weight:bold;width:22%;">Attenuator Details</th>
+        <th style="border:1px solid #999;padding:3px 6px;background:#d9d9d9;font-weight:bold;width:16%;">Value</th>
+        ${BANDS.map(b=>`<th style="border:1px solid #999;padding:3px 6px;background:#d9d9d9;font-weight:bold;text-align:center;">${b}</th>`).join("")}
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td style="border:1px solid #999;padding:3px 6px;">Attenuator Model</td>
+        <td style="border:1px solid #999;padding:3px 6px;">${att.model||"-"}</td>
+        ${attILArr.map(v=>`<td style="border:1px solid #999;padding:3px 6px;text-align:center;">${fmtN(v)}</td>`).join("")}
+      </tr>
+      <tr>
+        <td style="border:1px solid #999;padding:3px 6px;">Dimensions (W &times; H &times; L)</td>
+        <td style="border:1px solid #999;padding:3px 6px;">${(!skipN(att.width_mm)||!skipN(att.height_mm))?`${att.width_mm||"-"}&times;${att.height_mm||"-"}mm L=${att.length_mm||"-"}mm`:"-"}</td>
+        ${BANDS.map(()=>`<td style="border:1px solid #999;padding:3px 6px;"></td>`).join("")}
+      </tr>
+      <tr>
+        <td style="border:1px solid #999;padding:3px 6px;">Pressure Drop</td>
+        <td style="border:1px solid #999;padding:3px 6px;">${!skipN(att.pressureDrop_pa)?`${att.pressureDrop_pa} Pa`:"-"}</td>
+        ${BANDS.map(()=>`<td style="border:1px solid #999;padding:3px 6px;"></td>`).join("")}
+      </tr>
+      <!-- Total Lp after attenuation -->
+      <tr style="background:#f2f2f2;">
+        <td colspan="2" style="border:1px solid #999;padding:3px 6px;font-weight:bold;background:#f2f2f2;"><b>Total Lp at Receiver After Attenuation (dB)</b></td>
+        ${lpWith.map(v=>`<td style="border:1px solid #999;padding:3px 6px;text-align:center;font-weight:bold;background:#f2f2f2;"><b>${fmtN(v)}</b></td>`).join("")}
+      </tr>
+      <!-- Required noise level (repeated) -->
+      <tr style="background:#f2f2f2;">
+        <td colspan="2" style="border:1px solid #999;padding:3px 6px;font-weight:bold;background:#f2f2f2;"><b>${reqLevelLabel}</b></td>
+        ${BANDS.slice(0,7).map(()=>`<td style="border:1px solid #999;padding:3px 6px;background:#f2f2f2;"></td>`).join("")}
+        <td style="border:1px solid #999;padding:3px 6px;text-align:center;font-weight:bold;background:#f2f2f2;"><b>${reqLevelVal}</b></td>
+      </tr>
+      <!-- Additional dB reduction still required after attenuator (yellow) -->
+      <tr style="background:#ffff00;">
+        <td colspan="2" style="border:1px solid #999;padding:3px 6px;font-weight:bold;background:#ffff00;"><b>Additional dB Reduction Still Required</b></td>
+        ${BANDS.slice(0,7).map(()=>`<td style="border:1px solid #999;padding:3px 6px;background:#ffff00;"></td>`).join("")}
+        <td style="border:1px solid #999;padding:3px 6px;text-align:center;font-weight:bold;background:#ffff00;"><b>${additionalReductionWith>0?fmtN(additionalReductionWith):"0.0"}</b></td>
+      </tr>
+      <!-- Calculated noise level WITH attenuator (GREEN) -->
+      <tr style="background:#d9f7d9;">
+        <td colspan="2" style="border:1px solid #999;padding:3px 6px;font-weight:bold;color:#006600;background:#d9f7d9;"><b>Calculated Noise Level WITH Sound Attenuator (dB(A))</b></td>
+        ${BANDS.slice(0,7).map(()=>`<td style="border:1px solid #999;padding:3px 6px;background:#d9f7d9;"></td>`).join("")}
+        <td style="border:1px solid #999;padding:3px 6px;text-align:center;font-weight:bold;color:#006600;background:#d9f7d9;"><b>${fmtN(dbaWith)}</b></td>
+      </tr>
+    </tbody>
+  </table>
   ` : ""}
 
-  <!-- 8. ROCKWOOL / ROOM VOLUME CORRECTION -->
-  ${isRockwoolPath && (!skipN(rw.length_m)||!skipN(rw.width_m)||!skipN(rw.height_m)) ? `
-    ${secHead("8. Room Volume Correction (Rockwool)")}
-    ${kvTable([
-      ["Type",        rw.type],
-      ["Room Length", !skipN(rw.length_m)?`${rw.length_m} m`:null],
-      ["Room Width",  !skipN(rw.width_m) ?`${rw.width_m} m`:null],
-      ["Room Height", !skipN(rw.height_m)?`${rw.height_m} m`:null],
-      ["α 63 Hz",    rw.alpha?.hz63!=null?String(rw.alpha.hz63):null],
-      ["α 125 Hz",   rw.alpha?.hz125!=null?String(rw.alpha.hz125):null],
-      ["α 250 Hz",   rw.alpha?.hz250!=null?String(rw.alpha.hz250):null],
-      ["α 500 Hz",   rw.alpha?.hz500!=null?String(rw.alpha.hz500):null],
-      ["α 1000 Hz",  rw.alpha?.hz1000!=null?String(rw.alpha.hz1000):null],
-    ])}
-    ${hasRVC ? bandTable([["RVC per Band (dB)",...rvcArr.map(v=>fmt(v))]],false) : ""}
+  <!-- ══════ NC / NR RESULT ══════ -->
+  ${ncSection ? `
+  <div class="sec-title" style="margin-top:18px;">${ncSection.title}</div>
+  <table style="margin-bottom:4px;">
+    <thead><tr>${THC("Parameter")}${BANDS.map(b=>THC(b)).join("")}</tr></thead>
+    <tbody>${(ncSection.rows||[]).filter(r=>r).map((r,ri)=>{
+      const [lbl,...vals]=r;
+      const isY = lbl&&(lbl.includes("Reduction")||lbl.includes("Additional"));
+      const bg = ri===0?"#f9f9f9":isY?"#ffff00":"#fff";
+      return `<tr style="background:${bg};">${TD(lbl,"font-weight:"+(ri===0||isY?"bold":"normal")+";")}${vals.map(v=>TDC(v??"-")).join("")}</tr>`;
+    }).join("")}</tbody>
+  </table>
+  ${ncSection.badge?`<div style="padding:5px 10px;font-weight:bold;font-size:10pt;margin:4px 0;border:1px solid #ccc;">${ncSection.badge}</div>`:""}
   ` : ""}
 
-  <!-- 9. RECEIVER -->
-  ${secHead("9. Receiver / Design Criteria")}
-  ${kvTable([
-    ["Receiver Description", rec.description],
-    ["Distance to Receiver", !skipN(rec.distance_m)?`${rec.distance_m} m`:null],
-    ["Directivity Factor",   !skipN(rec.directivity)?String(rec.directivity):null],
-    ["Noise Criterion",      rec.ncNrChoice||"NC"],
-    ["Required NC",          rec.ncNrChoice==="NC"&&!skipN(rec.requiredNC)?`NC ${rec.requiredNC}`:null],
-    ["Required NR",          rec.ncNrChoice==="NR"&&!skipN(rec.requiredNR)?`NR ${rec.requiredNR}`:null],
-    ["Required dB(A)",       rec.ncNrChoice==="dBA"&&!skipN(rec.required_dba)?`${rec.required_dba} dB(A)`:null],
-  ])}
-
-  <!-- 10. CALCULATED Lp AT RECEIVER (per band) -->
-  ${actualVals && actualVals.some(v=>v!==0) ? `
-    ${secHead("10. Calculated Lp at Receiver (per band)")}
-    ${bandTable([["Total Lp at Receiver (dB)",...actualVals.map(v=>fmt2(v))]],false)}
+  ${nrSection ? `
+  <div class="sec-title" style="margin-top:18px;">${nrSection.title}</div>
+  <table style="margin-bottom:4px;">
+    <thead><tr>${THC("Parameter")}${BANDS.map(b=>THC(b)).join("")}</tr></thead>
+    <tbody>${(nrSection.rows||[]).filter(r=>r).map((r,ri)=>{
+      const [lbl,...vals]=r;
+      const isY=lbl&&(lbl.includes("Reduction")||lbl.includes("Additional"));
+      const bg=ri===0?"#f9f9f9":isY?"#ffff00":"#fff";
+      return `<tr style="background:${bg};">${TD(lbl,"font-weight:"+(ri===0||isY?"bold":"normal")+";")}${vals.map(v=>TDC(v??"-")).join("")}</tr>`;
+    }).join("")}</tbody>
+  </table>
+  ${nrSection.badge?`<div style="padding:5px 10px;font-weight:bold;font-size:10pt;margin:4px 0;border:1px solid #ccc;">${nrSection.badge}</div>`:""}
   ` : ""}
 
-  <!-- 11. NC RESULT -->
-  ${ncSection ? resultSec(ncSection) : ""}
-
-  <!-- 12. NR RESULT -->
-  ${nrSection ? resultSec(nrSection) : ""}
-
-  <!-- 13. dB(A) RESULT -->
-  ${dbaSection ? resultSec(dbaSection) : ""}
-
-  <!-- FOOTER -->
-  <div style="margin-top:36px;padding-top:12px;border-top:1px solid #E2E8F0;font-size:10px;color:#94A3B8;text-align:center;">
+  <!-- ══════ FOOTER ══════ -->
+  <div style="margin-top:28px;padding-top:8px;border-top:1px solid #ccc;font-size:9pt;color:#666;text-align:center;">
     Generated by DG-SARIA Acoustic Calculator &nbsp;·&nbsp; AAPL Consultants &nbsp;·&nbsp; ${dateStr}
   </div>
 
@@ -1184,6 +1301,54 @@ function buildHTMLReport(form, liveLp, project) {
 }
 
 async function downloadPDF(form, liveLp, project) {
+  // Print the exact same HTML as the preview via a hidden iframe → browser PDF dialog
+  const html = buildHTMLReport(form, liveLp, project);
+  // Inject @page print settings so it prints as A4
+  const printHtml = html.replace(
+    "</style>",
+    `@page { size: A4; margin: 12mm 10mm; }
+     @media print {
+       body { background: #fff !important; }
+       .page { max-width: 100% !important; padding: 0 !important; }
+       table { page-break-inside: avoid; }
+       tr { page-break-inside: avoid; }
+       .sec-title { page-break-after: avoid; }
+     }</style>`
+  );
+
+  // Use Blob URL instead of srcdoc — avoids iframe sandbox script restrictions
+  // that React dev server applies to srcdoc iframes
+  const blob = new Blob([printHtml], { type: "text/html;charset=utf-8" });
+  const blobUrl = URL.createObjectURL(blob);
+
+  const iframe = document.createElement("iframe");
+  iframe.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:210mm;height:297mm;border:none;visibility:hidden;";
+  document.body.appendChild(iframe);
+
+  await new Promise(resolve => {
+    iframe.onload = resolve;
+    iframe.src = blobUrl;          // src (blob:) not srcdoc — no sandbox restrictions
+  });
+
+  // Short delay for fonts/layout to settle
+  await new Promise(r => setTimeout(r, 500));
+
+  try {
+    iframe.contentWindow.focus();
+    iframe.contentWindow.print();
+  } catch(e) {
+    // Fallback: open in new tab so user can Ctrl+P manually
+    window.open(blobUrl, "_blank");
+  }
+
+  // Clean up blob URL and iframe after print dialog closes
+  setTimeout(() => {
+    try { document.body.removeChild(iframe); } catch(_) {}
+    URL.revokeObjectURL(blobUrl);
+  }, 5000);
+}
+
+async function _downloadPDF_jspdf_unused(form, liveLp, project) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const doc = new jsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
@@ -1676,97 +1841,23 @@ async function downloadWord(form, liveLp, project) {
   URL.revokeObjectURL(url);
 }
 
-/* ── Preview + Download Modal ────────────────────────────── */
-function DownloadModal({ onClose, form, liveLp, project }) {
-  const [loading, setLoading] = useState(null); // "pdf"|"word"
-  const htmlReport = useMemo(() => buildHTMLReport(form, liveLp, project), [form, liveLp, project]);
-
-  const handle = async (type) => {
-    setLoading(type);
-    try {
-      if (type==="pdf")  await downloadPDF(form, liveLp, project);
-      else               await downloadWord(form, liveLp, project);
-      toast.success(`${type==="pdf"?"PDF":"Word"} downloaded`);
-      onClose();
-    } catch(e) {
-      console.error(e);
-      toast.error("Download failed: "+e.message);
-    } finally { setLoading(null); }
-  };
-
-  return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.55)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center", padding:"16px" }}
-      onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{ background:"#fff", borderRadius:18, width:"min(960px,98vw)", maxHeight:"95vh", display:"flex", flexDirection:"column", boxShadow:"0 24px 80px rgba(0,0,0,.35)", fontFamily:"Inter,sans-serif", overflow:"hidden" }}>
-
-        {/* Header */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"18px 24px 16px", borderBottom:"1.5px solid #E2E8F0", flexShrink:0 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ width:36, height:36, borderRadius:10, background:"#EEF2FF", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <FileText size={18} color="#6366F1"/>
-            </div>
-            <div>
-              <div style={{ fontSize:15, fontWeight:700, color:"#0F172A", fontFamily:"Plus Jakarta Sans,sans-serif" }}>Report Preview</div>
-              <div style={{ fontSize:11, color:"#94A3B8", marginTop:1 }}>Review before downloading</div>
-            </div>
-          </div>
-          <button onClick={onClose} type="button" style={{ background:"none", border:"none", cursor:"pointer", color:"#94A3B8", fontSize:20, lineHeight:1, padding:"4px 8px" }}>✕</button>
-        </div>
-
-        {/* Preview iframe */}
-        <div style={{ flex:1, overflow:"hidden", background:"#F1F5F9", padding:"0" }}>
-          <iframe
-            srcDoc={htmlReport}
-            title="Report Preview"
-            style={{ width:"100%", height:"100%", border:"none", minHeight:"500px" }}
-            sandbox="allow-same-origin"
-          />
-        </div>
-
-        {/* Download buttons */}
-        <div style={{ padding:"16px 24px 20px", borderTop:"1.5px solid #E2E8F0", flexShrink:0, background:"#FAFAFA" }}>
-          <p style={{ fontSize:11.5, color:"#64748B", margin:"0 0 12px", textAlign:"center" }}>
-            Choose format to download — includes all calculations, octave band tables and NC/NR/dB(A) results
-          </p>
-          <div style={{ display:"flex", gap:10, justifyContent:"center", flexWrap:"wrap" }}>
-            <button type="button" disabled={!!loading} onClick={()=>handle("pdf")}
-              style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 20px", borderRadius:10, border:"1.5px solid #FECDD3", background:"#FFF1F2", cursor:loading?"not-allowed":"pointer", transition:"all .15s", minWidth:160 }}
-              onMouseEnter={e=>{if(!loading){e.currentTarget.style.background="#FFE4E6";e.currentTarget.style.borderColor="#FB7185";}}}
-              onMouseLeave={e=>{e.currentTarget.style.background="#FFF1F2";e.currentTarget.style.borderColor="#FECDD3";}}>
-              <div style={{ width:34, height:34, borderRadius:8, background:"#FEE2E2", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                {loading==="pdf" ? <Loader2 size={16} color="#E11D48" style={{animation:"spin .7s linear infinite"}}/> : <FileText size={16} color="#E11D48"/>}
-              </div>
-              <div style={{ textAlign:"left" }}>
-                <div style={{ fontSize:13, fontWeight:700, color:"#0F172A" }}>Download PDF</div>
-                <div style={{ fontSize:10.5, color:"#94A3B8", marginTop:1 }}>A4 · printable</div>
-              </div>
-            </button>
-            <button type="button" disabled={!!loading} onClick={()=>handle("word")}
-              style={{ display:"flex", alignItems:"center", gap:10, padding:"11px 20px", borderRadius:10, border:"1.5px solid #BFDBFE", background:"#EFF6FF", cursor:loading?"not-allowed":"pointer", transition:"all .15s", minWidth:160 }}
-              onMouseEnter={e=>{if(!loading){e.currentTarget.style.background="#DBEAFE";e.currentTarget.style.borderColor="#60A5FA";}}}
-              onMouseLeave={e=>{e.currentTarget.style.background="#EFF6FF";e.currentTarget.style.borderColor="#BFDBFE";}}>
-              <div style={{ width:34, height:34, borderRadius:8, background:"#DBEAFE", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                {loading==="word" ? <Loader2 size={16} color="#1D4ED8" style={{animation:"spin .7s linear infinite"}}/> : <FileIcon size={16} color="#1D4ED8"/>}
-              </div>
-              <div style={{ textAlign:"left" }}>
-                <div style={{ fontSize:13, fontWeight:700, color:"#0F172A" }}>Download Word</div>
-                <div style={{ fontSize:10.5, color:"#94A3B8", marginTop:1 }}>Editable .docx</div>
-              </div>
-            </button>
-          </div>
-          <p style={{ fontSize:10.5, color:"#CBD5E1", margin:"10px 0 0", textAlign:"center" }}>
-            Libraries load on first use — may take a moment
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* ═══════════════════════════════════════════════════════════ */
+// ── Path keys in display order ──────────────────────────────────────────
+const PATH_KEYS = ["exhaust","intake","through_wall","through_door","through_ceiling_above","through_ceiling_below"];
+
 export default function AcousticInputForm({ projectId, existing, onSaved, onResults, project }) {
-  const [form, setForm] = useState(() => {
+
+  // ── Per-path independent state ────────────────────────────────────────
+  // Each path key holds its own complete copy of DEFAULT (fully independent).
+  // Changing values in exhaust never touches intake, wall, door, etc.
+  const [forms, setForms] = useState(() => {
+    const init = {};
+    PATH_KEYS.forEach(pk => {
+      init[pk] = { ...DEFAULT, noisePath: pk };
+    });
+    // If `existing` was passed, seed the matching path with its data
     if (existing) {
+      const pk = existing.noisePath ?? "exhaust";
       const ducts = Array.isArray(existing.ducts) && existing.ducts.length
         ? existing.ducts.map((d,i) => ({ ...defaultDuct(i), ...d, _showCoeff:false, _showElbow:false }))
         : [defaultDuct(0)];
@@ -1774,39 +1865,69 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
       const rawBand = g.rawBand ?? g.swl ?? { ...EMPTY_BAND };
       const noiseInputType = g.noiseInputType ?? "swl_db";
       const measurementDistance_m = g.measurementDistance_m ?? 1;
-      return {
+      init[pk] = {
         ...DEFAULT,
-        noisePath: existing.noisePath ?? "exhaust",
+        noisePath: pk,
         generator: {
           ...DEFAULT.generator, ...g,
           rawBand,
           swl: computeSWLFromRaw(noiseInputType, rawBand, measurementDistance_m),
         },
-        room:       { ...DEFAULT.room, distance_m:3, ...existing.room },
+        room:           { ...DEFAULT.room, distance_m:3, ...existing.room },
         ducts,
-        erl:        { ...DEFAULT.erl, ...existing.erl },
+        erl:            { ...DEFAULT.erl, ...existing.erl },
         attenuator:     { ...DEFAULT.attenuator,     ...existing.attenuator     },
         receiver:       { ...DEFAULT.receiver,       ...existing.receiver       },
         distanceEffect: { ...DEFAULT.distanceEffect, ...existing.distanceEffect },
         roomOrDistance: existing.roomOrDistance ?? "spaceRoom",
-        throughPath: { ...DEFAULT.throughPath, ...(existing.throughPath||{}) },
+        throughPath:    { ...DEFAULT.throughPath, ...(existing.throughPath||{}) },
+        rockwool:       { ...DEFAULT.rockwool,    ...(existing.rockwool||{}) },
       };
     }
-    return { ...DEFAULT };
+    return init;
   });
+
+  // Active tab
+  const [activePathKey, setActivePathKey] = useState(
+    existing?.noisePath ?? "exhaust"
+  );
+
+  // Convenience: current active form
+  const form = forms[activePathKey];
+
+  // Scoped setter — only touches the active path's slice
+  const setForm = useCallback((updater) => {
+    setForms(fs => ({
+      ...fs,
+      [activePathKey]: typeof updater === "function" ? updater(fs[activePathKey]) : updater,
+    }));
+  }, [activePathKey]);
 
   const [saving,  setSaving]  = useState(false);
   const [running, setRunning] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
 
-  // Live receiver Lp — recomputes on every form change, no backend needed
+  // Live receiver Lp for the active path
   const liveLp = useMemo(() => calcLiveReceiverLp(form), [form]);
+
+  // liveLp for ALL paths — used by the download modal
+  const allLiveLp = useMemo(() => {
+    const out = {};
+    PATH_KEYS.forEach(pk => { out[pk] = calcLiveReceiverLp(forms[pk]); });
+    return out;
+  }, [forms]);
 
   // Live NC / NR values — updated on every keystroke (before blur) for instant preview
   const [liveNCValue, setLiveNCValue] = useState(Number(form.receiver.requiredNC) || 65);
   const [liveNRValue, setLiveNRValue] = useState(Number(form.receiver.requiredNR) || 65);
 
-  // Setters
+  // Keep live NC/NR in sync when switching tabs
+  useEffect(() => {
+    setLiveNCValue(Number(form.receiver.requiredNC) || 65);
+    setLiveNRValue(Number(form.receiver.requiredNR) || 65);
+  }, [activePathKey, form.receiver.requiredNC, form.receiver.requiredNR]);
+
+  // Setters — all scoped to current active path via setForm
   const setG = (k,v) => setForm(f => {
     const g = {...f.generator, [k]:v};
     // recompute swl whenever input type, rawBand, or distance changes
@@ -1817,12 +1938,12 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
     const g = {...f.generator, rawBand:v};
     g.swl = computeSWLFromRaw(g.noiseInputType, v, g.measurementDistance_m);
     return {...f, generator:g};
-  }), []);
+  }), [setForm]);
   const setRm  = (k,v) => setForm(f=>({...f, room:{...f.room,[k]:v}}));
   const setErl = (k,v) => setForm(f=>({...f, erl:{...f.erl,[k]:v}}));
   const setA   = (k,v) => setForm(f=>({...f, attenuator:{...f.attenuator,[k]:v}}));
   const setDE  = (k,v) => setForm(f=>({...f, distanceEffect:{...f.distanceEffect,[k]:v}}));
-  const setAW = useCallback(v=>setForm(f=>({...f, attenuator:{...f.attenuator, il:v}})),[]);
+  const setAW = useCallback(v=>setForm(f=>({...f, attenuator:{...f.attenuator, il:v}})),[setForm]);
   const setRc = (k,v) => setForm(f=>({...f, receiver:{...f.receiver,[k]:v}}));
   const setTP = (k,v) => setForm(f=>({...f, throughPath:{...f.throughPath,[k]:v}}));
 
@@ -1903,21 +2024,31 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         input[type=number] { -moz-appearance:textfield; }
       `}</style>
 
-      {/* ── Noise Path ── */}
+      {/* ── Noise Path Tabs — each tab is fully independent ── */}
       <div style={{ background:"#fff", borderRadius:12, border:"1px solid #E2E8F0", padding:"13px 16px" }}>
-        <p style={{ fontSize:11, fontWeight:700, color:"#475569", textTransform:"uppercase", letterSpacing:".05em", fontFamily:"Inter,sans-serif", margin:"0 0 10px" }}>Noise Path</p>
+        <p style={{ fontSize:11, fontWeight:700, color:"#475569", textTransform:"uppercase", letterSpacing:".05em", fontFamily:"Inter,sans-serif", margin:"0 0 10px" }}>
+          Noise Path &nbsp;
+          <span style={{ fontSize:10, fontWeight:400, color:"#94A3B8", textTransform:"none", letterSpacing:0 }}>
+            — each tab is completely independent
+          </span>
+        </p>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           {NOISE_PATHS.map(p=>(
-            <button key={p.value} type="button" onClick={()=>setForm(f=>({...f,noisePath:p.value}))}
+            <button key={p.value} type="button"
+              onClick={()=>setActivePathKey(p.value)}
               style={{
                 padding:"7px 16px", borderRadius:8,
-                border:`1.5px solid ${form.noisePath===p.value?"#0E9F8E":"#E2E8F0"}`,
-                background:form.noisePath===p.value?"#E3F8F5":"#fff",
-                color:form.noisePath===p.value?"#0E9F8E":"#64748B",
+                border:`1.5px solid ${activePathKey===p.value?"#0E9F8E":"#E2E8F0"}`,
+                background:activePathKey===p.value?"#E3F8F5":"#fff",
+                color:activePathKey===p.value?"#0E9F8E":"#64748B",
                 fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"Inter,sans-serif", transition:"all .15s",
               }}>{p.label}</button>
           ))}
         </div>
+        <p style={{ fontSize:10.5, color:"#94A3B8", margin:"8px 0 0", fontFamily:"Inter,sans-serif" }}>
+          Active: <strong style={{ color:"#0E9F8E" }}>{NOISE_PATHS.find(p=>p.value===activePathKey)?.label}</strong>
+          &nbsp;· Editing this sheet does not affect any other path.
+        </p>
       </div>
 
       {/* ── 1. Generator ── */}
@@ -3075,12 +3206,12 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </motion.button>
       </div>
 
-      {/* ── Download Modal ── */}
+      {/* ── Download Modal — receives ALL paths for combined multi-path report ── */}
       {showDownloadModal && (
         <DownloadModal
           onClose={()=>setShowDownloadModal(false)}
-          form={form}
-          liveLp={calcLiveReceiverLp(form)}
+          allForms={forms}
+          allLiveLp={allLiveLp}
           project={project}
         />
       )}
