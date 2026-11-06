@@ -345,7 +345,10 @@ function calcRockwoolRVC(L, W, H, alphaObj) {
 // Returns { hz63, hz125, … hz8000 } — Total Lp at receiver
 function calcLiveReceiverLp(form) {
   const isDuctPath = DUCT_PATHS.includes(form.noisePath);
-  const swl = { ...form.generator.swl };
+  // Use combined SWL from generators array; fall back to legacy single generator
+  const swl = form.generators && form.generators.length > 0
+    ? combineEquipmentSWL(form.generators)
+    : { ...form.generator.swl };
 
   // 2. Duct IL — only for exhaust/intake paths
   const ductIL = BAND_KEYS.map(() => 0);
@@ -483,15 +486,43 @@ const NOISE_PATHS = [
 // Paths that use duct / ERL routing
 const DUCT_PATHS = ["exhaust","intake"];
 
+// ── Default single equipment entry ────────────────────────────
+const defaultEquipment = () => ({
+  noiseInputType: "swl_db", measurementDistance_m: 1,
+  equipmentId:"", modelNumber:"", ratedKva:0, buildingRef:"", swl_dba:0,
+  rawBand: { ...EMPTY_BAND },
+  swl:     { ...EMPTY_BAND },
+});
+
+// ── Logarithmic combination of multiple equipment SWLs ────────
+// SWL_combined[k] = 10·log10(Σ 10^(SWL_i[k]/10))
+function combineEquipmentSWL(generators) {
+  if (!generators || generators.length === 0) return { ...EMPTY_BAND };
+  if (generators.length === 1) return { ...generators[0].swl };
+  const combined = {};
+  BAND_KEYS.forEach(k => {
+    const sum = generators.reduce((acc, g) => {
+      const v = Number(g.swl?.[k]) || 0;
+      return acc + Math.pow(10, v / 10);
+    }, 0);
+    combined[k] = round1(10 * Math.log10(sum));
+  });
+  return combined;
+}
+
 const DEFAULT = {
   noisePath:       "exhaust",
+  equipmentType:   "DG",          // "DG" | "Pump"
   roomOrDistance:  "spaceRoom",  // "spaceRoom" | "distanceEffect"
+  // Legacy single generator (kept for backward compat)
   generator: {
     noiseInputType: "swl_db", measurementDistance_m: 1,
     equipmentId:"", modelNumber:"", ratedKva:0, buildingRef:"", swl_dba:0,
     rawBand: { ...EMPTY_BAND },
     swl:     { ...EMPTY_BAND },
   },
+  // Multi-equipment array (new — drives all calculations)
+  generators: [ defaultEquipment() ],
   room:       { length_m:0, width_m:0, height_m:0, distance_m:3 },
   ducts:      [defaultDuct(0)],
   erl:        { width_mm:0, height_mm:0 },
@@ -913,7 +944,11 @@ function buildHTMLReport(form, liveLp, project) {
   const dateStr = now.toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
 
   // ── Re-compute intermediate calculation values ─────────────
-  const swlArr     = BAND_KEYS.map(k => Number(g.swl?.[k]) || 0);
+  // Use combined SWL from generators array; fall back to legacy single generator
+  const combinedSWL = (form.generators && form.generators.length > 0)
+    ? combineEquipmentSWL(form.generators)
+    : (g.swl || {});
+  const swlArr     = BAND_KEYS.map(k => Number(combinedSWL[k]) || 0);
   const erlW       = Number(erl.width_mm)  || 0;
   const erlH       = Number(erl.height_mm) || 0;
   const erlArr     = (isDuctPath && (erlW>0||erlH>0)) ? (calcERL(erlW, erlH) || BAND_KEYS.map(()=>0)) : BAND_KEYS.map(()=>0);
@@ -988,6 +1023,11 @@ function buildHTMLReport(form, liveLp, project) {
 
   // Required noise level
   const ncNrChoice  = rec.ncNrChoice || "dBA";
+  const showAWeight = ncNrChoice === "dBA";
+
+  // Per-band Lp + A-Weight arrays (for dB(A) logarithmic addition rows)
+  const dbaPerBandWithout = lpWithout.map((v,i) => Number(v) + aWeightArr[i]);
+  const dbaPerBandWith    = lpWith.map((v,i) => Number(v) + aWeightArr[i]);
   let reqLevelLabel = "";
   let reqLevelVal   = "";
   if (ncNrChoice==="NC")  { reqLevelLabel="Required NC Level";   reqLevelVal = !skipN(rec.requiredNC)  ? `NC ${rec.requiredNC}` : "-"; }
@@ -1035,19 +1075,36 @@ function buildHTMLReport(form, liveLp, project) {
   </div>
 
   <!-- ══════ 1. EQUIPMENT INFO (2-col label/value) ══════ -->
-  <table style="width:100%;margin-bottom:12px;">
+  ${(() => {
+    const gens = (form.generators && form.generators.length > 0) ? form.generators : [g];
+    if (gens.length === 1) {
+      const gen0 = gens[0];
+      return `<table style="width:100%;margin-bottom:12px;">
     <tbody>
       <tr>
-        ${TD("<b>Equipment ID</b>",  "width:18%;background:#f2f2f2;")} ${TD(g.equipmentId||"-","width:32%;")}
+        ${TD("<b>Equipment ID</b>",  "width:18%;background:#f2f2f2;")} ${TD(gen0.equipmentId||"-","width:32%;")}
         ${TD("<b>Noise Path</b>",    "width:18%;background:#f2f2f2;")} ${TD(pathLabel||"-","width:32%;")}
       </tr>
       <tr>
-        ${TD("<b>Model Number</b>",  "background:#f2f2f2;")} ${TD(g.modelNumber||"-")}
-        ${TD("<b>Building Ref</b>",  "background:#f2f2f2;")} ${TD(g.buildingRef||"-")}
+        ${TD("<b>Model Number</b>",  "background:#f2f2f2;")} ${TD(gen0.modelNumber||"-")}
+        ${TD("<b>Building Ref</b>",  "background:#f2f2f2;")} ${TD(gen0.buildingRef||"-")}
       </tr>
       <tr>
         ${TD("<b>Receiver Location</b>","background:#f2f2f2;")} ${TD(rec.description||"-")}
-        ${TD("<b>Rated kVA</b>",     "background:#f2f2f2;")} ${TD(g.ratedKva?`${g.ratedKva} kVA`:"-")}
+        ${TD("<b>Rated kVA</b>",     "background:#f2f2f2;")} ${TD(gen0.ratedKva?`${gen0.ratedKva} kVA`:"-")}
+      </tr>
+      ${project?.name||project?.client ? `<tr>
+        ${TD("<b>Project</b>","background:#f2f2f2;")} ${TD(project?.name||"-")}
+        ${TD("<b>Client</b>","background:#f2f2f2;")} ${TD(project?.client||"-")}
+      </tr>`:""}
+    </tbody>
+  </table>`;
+    } else {
+      return `<table style="width:100%;margin-bottom:4px;">
+    <tbody>
+      <tr>
+        ${TD("<b>Noise Path</b>","width:18%;background:#f2f2f2;")} ${TD(pathLabel||"-","width:32%;")}
+        ${TD("<b>Receiver Location</b>","width:18%;background:#f2f2f2;")} ${TD(rec.description||"-","width:32%;")}
       </tr>
       ${project?.name||project?.client ? `<tr>
         ${TD("<b>Project</b>","background:#f2f2f2;")} ${TD(project?.name||"-")}
@@ -1055,16 +1112,32 @@ function buildHTMLReport(form, liveLp, project) {
       </tr>`:""}
     </tbody>
   </table>
+  ${gens.map((gen0, idx) => `
+  <div style="font-size:9pt;font-weight:bold;color:#0E9F8E;margin:8px 0 4px;">${form.equipmentType||"Equipment"} #${idx+1}</div>
+  <table style="width:100%;margin-bottom:6px;">
+    <tbody>
+      <tr>
+        ${TD("<b>Equipment ID</b>","width:18%;background:#f2f2f2;")} ${TD(gen0.equipmentId||"-","width:32%;")}
+        ${TD("<b>Model Number</b>","width:18%;background:#f2f2f2;")} ${TD(gen0.modelNumber||"-","width:32%;")}
+      </tr>
+      <tr>
+        ${TD("<b>Rated kVA</b>","background:#f2f2f2;")} ${TD(gen0.ratedKva?`${gen0.ratedKva} kVA`:"-")}
+        ${TD("<b>Building Ref</b>","background:#f2f2f2;")} ${TD(gen0.buildingRef||"-")}
+      </tr>
+    </tbody>
+  </table>`).join("")}`;
+    }
+  })()}
 
   <!-- ══════ 2. SOUND POWER LEVELS ══════ -->
-  <div class="sec-title">The sound power levels for the equipment unit:</div>
+  <div class="sec-title">${(form.generators&&form.generators.length>1)?"Combined Sound Power Level — Logarithmic Sum [10·log₁₀(Σ 10^(SWL/10))]:":"The sound power levels for the equipment unit:"}</div>
   <table style="margin-bottom:6px;">
     <thead><tr>${THC("Band (Hz)","width:20%;")}${BANDS.map(b=>THC(b)).join("")}</tr></thead>
     <tbody>
       ${swlArr.some(v=>v!==0)?`<tr>${TD("Sound Power Level, Lw (dB)","background:#f2f2f2;")}${swlArr.map(v=>TDC(fmtN(v))).join("")}</tr>`:""}
     </tbody>
   </table>
-  ${!skipN(g.swl_dba)?`<div class="note">Overall Sound Power Level: <b>${g.swl_dba} dB(A)</b></div>`:""}
+  ${(form.generators&&form.generators.length>1)?`<div class="note" style="color:#059669;">Combined SWL from ${form.generators.length} units using logarithmic addition.</div>`:`${!skipN(g.swl_dba)?`<div class="note">Overall Sound Power Level: <b>${g.swl_dba} dB(A)</b></div>`:""}`}
   ${g.noiseInputType?`<div class="note">Input type: ${g.noiseInputType}${!skipN(g.measurementDistance_m)?` at ${g.measurementDistance_m} m`:""}</div>`:""}
 
   <!-- ══════ 3. PATH 1 CALCULATION TABLE ══════ -->
@@ -1128,12 +1201,12 @@ function buildHTMLReport(form, liveLp, project) {
         ${rvcBands.map(v=>TDC(v!==0?`(${fmtN(Math.abs(v))})`:"-")).join("")}
       </tr>` : ""}
 
-      <!-- A-Weighting row -->
-      <tr>
+      <!-- A-Weighting row — only in dB(A) mode -->
+      ${showAWeight ? `<tr>
         ${TD("A-Weighting Correction (dB)")}
         ${isDuctPath||isThroughPath?TDC(""):""}
         ${aWeightArr.map(v=>TDC(v>=0?`+${fmtN(v)}`:fmtN(v))).join("")}
-      </tr>
+      </tr>` : ""}
 
       <!-- Room/space parameters (informational) -->
       ${useRoom ? `
@@ -1156,6 +1229,20 @@ function buildHTMLReport(form, liveLp, project) {
         ${isDuctPath||isThroughPath?TDC("","background:#fff2cc;"):""}
         ${lpWithout.map(v=>TDC(`<b>${fmtN(v)}</b>`,"background:#fff2cc;font-weight:bold;")).join("")}
       </tr>
+
+      <!-- ── dB(A) Logarithmic Addition rows (only in dB(A) mode) ── -->
+      ${showAWeight ? `
+      <tr style="background:#f2f2f2;">
+        ${TD("Lp + A-Weighting per Band &nbsp;<span style='font-size:9pt;font-weight:normal;'>[Lp(i) + A(i)]</span>","background:#f2f2f2;font-weight:bold;")}
+        ${isDuctPath||isThroughPath?TDC("","background:#f2f2f2;"):""}
+        ${dbaPerBandWithout.map(v=>TDC(fmtN(v),"background:#f2f2f2;")).join("")}
+      </tr>
+      <tr style="background:#fffacd;">
+        ${TD(`<b>Total dB(A) &mdash; Logarithmic Addition</b> <span style='font-size:8.5pt;font-weight:normal;'>[10&middot;log&#8321;&#8320;(&Sigma; 10<sup>(Lp+A)/10</sup>)]</span>`,"background:#fffacd;font-weight:bold;")}
+        ${isDuctPath||isThroughPath?TDC("","background:#fffacd;"):""}
+        ${BANDS.slice(0,7).map(()=>TDC("","background:#fffacd;")).join("")}
+        ${TDC(`<b>${fmtN(dbaWithout)} dB(A)</b>`,"background:#fffacd;font-weight:bold;")}
+      </tr>` : ""}
     </tbody>
   </table>
 
@@ -1241,6 +1328,17 @@ function buildHTMLReport(form, liveLp, project) {
         <td colspan="2" style="border:1px solid #999;padding:3px 6px;font-weight:bold;background:#f2f2f2;"><b>Total Lp at Receiver After Attenuation (dB)</b></td>
         ${lpWith.map(v=>`<td style="border:1px solid #999;padding:3px 6px;text-align:center;font-weight:bold;background:#f2f2f2;"><b>${fmtN(v)}</b></td>`).join("")}
       </tr>
+      <!-- dB(A) logarithmic rows WITH attenuator (only in dB(A) mode) -->
+      ${showAWeight ? `
+      <tr style="background:#f2f2f2;">
+        <td colspan="2" style="border:1px solid #999;padding:3px 6px;font-weight:bold;background:#f2f2f2;">Lp + A-Weighting per Band (with attenuator) &nbsp;<span style="font-size:9pt;font-weight:normal;">[Lp(i) + A(i)]</span></td>
+        ${dbaPerBandWith.map(v=>`<td style="border:1px solid #999;padding:3px 6px;text-align:center;background:#f2f2f2;">${fmtN(v)}</td>`).join("")}
+      </tr>
+      <tr style="background:#fffacd;">
+        <td colspan="2" style="border:1px solid #999;padding:3px 6px;font-weight:bold;background:#fffacd;"><b>Total dB(A) WITH Attenuator &mdash; Logarithmic Addition</b> <span style="font-size:8.5pt;font-weight:normal;">[10&middot;log&#8321;&#8320;(&Sigma; 10<sup>(Lp+A)/10</sup>)]</span></td>
+        ${BANDS.slice(0,7).map(()=>`<td style="border:1px solid #999;padding:3px 6px;background:#fffacd;"></td>`).join("")}
+        <td style="border:1px solid #999;padding:3px 6px;text-align:center;font-weight:bold;background:#fffacd;"><b>${fmtN(dbaWith)} dB(A)</b></td>
+      </tr>` : ""}
       <!-- Required noise level (repeated) -->
       <tr style="background:#f2f2f2;">
         <td colspan="2" style="border:1px solid #999;padding:3px 6px;font-weight:bold;background:#f2f2f2;"><b>${reqLevelLabel}</b></td>
@@ -1406,41 +1504,53 @@ async function _downloadPDF_jspdf_unused(form, liveLp, project) {
   doc.setFont("helvetica","bold"); doc.setFontSize(10); doc.setTextColor(15,23,42);
   doc.text("Equipment Details",margin,y); y+=6;
   doc.setDrawColor(14,159,142); doc.line(margin,y,pw-margin,y); y+=5;
-  const eqRows = [
-    ["Equipment ID", form.generator.equipmentId||"—"],
-    ["Model Number", form.generator.modelNumber||"—"],
-    ["Rated kVA", form.generator.ratedKva||"—"],
-    ["Building Ref", form.generator.buildingRef||"—"],
-    ["Overall SWL", `${form.generator.swl_dba||"—"} dB(A)`],
-    ["Noise Input Type", form.generator.noiseInputType||"—"],
-    ["Noise Path", NOISE_PATH_LABEL[form.noisePath]||form.noisePath],
-    ["Receiver Description", form.receiver.description||"—"],
-    ["Noise Criterion", form.receiver.ncNrChoice],
-    ["Required Level",
-      form.receiver.ncNrChoice==="NC" ? `NC ${form.receiver.requiredNC}` :
-      form.receiver.ncNrChoice==="NR" ? `NR ${form.receiver.requiredNR}` :
-      `${form.receiver.required_dba} dB(A)`],
-  ];
-  autoTable(doc,{
-    startY:y, margin:{left:margin,right:margin},
-    head:[["Parameter","Value"]],
-    body:eqRows,
-    styles:{fontSize:8.5,cellPadding:2.5},
-    headStyles:{fillColor:[14,159,142],textColor:255,fontStyle:"bold"},
-    columnStyles:{0:{fontStyle:"bold",cellWidth:70}},
-    theme:"grid",
+  const pdfGens = (form.generators && form.generators.length > 0) ? form.generators : [form.generator];
+  pdfGens.forEach((gen, idx) => {
+    if (pdfGens.length > 1) {
+      checkY(8);
+      doc.setFont("helvetica","italic"); doc.setFontSize(8.5); doc.setTextColor(14,159,142);
+      doc.text(`${form.equipmentType||"Equipment"} #${idx+1}`,margin,y); y+=6; doc.setTextColor(15,23,42);
+    }
+    const eqRows = [
+      ["Equipment ID", gen.equipmentId||"—"],
+      ["Model Number", gen.modelNumber||"—"],
+      ["Rated kVA", gen.ratedKva||"—"],
+      ["Building Ref", gen.buildingRef||"—"],
+      ["Overall SWL", `${gen.swl_dba||"—"} dB(A)`],
+      ["Noise Input Type", gen.noiseInputType||"—"],
+      ...(idx===0 ? [
+        ["Noise Path", NOISE_PATH_LABEL[form.noisePath]||form.noisePath],
+        ["Receiver Description", form.receiver.description||"—"],
+        ["Noise Criterion", form.receiver.ncNrChoice],
+        ["Required Level",
+          form.receiver.ncNrChoice==="NC" ? `NC ${form.receiver.requiredNC}` :
+          form.receiver.ncNrChoice==="NR" ? `NR ${form.receiver.requiredNR}` :
+          `${form.receiver.required_dba} dB(A)`],
+      ] : []),
+    ];
+    autoTable(doc,{
+      startY:y, margin:{left:margin,right:margin},
+      head:[["Parameter","Value"]],
+      body:eqRows,
+      styles:{fontSize:8.5,cellPadding:2.5},
+      headStyles:{fillColor:[14,159,142],textColor:255,fontStyle:"bold"},
+      columnStyles:{0:{fontStyle:"bold",cellWidth:70}},
+      theme:"grid",
+    });
+    y = doc.lastAutoTable.finalY + 6;
   });
-  y = doc.lastAutoTable.finalY + 8;
+  y += 2;
 
-  // ── SWL per band ──
+  // ── SWL per band (combined if multiple equipment) ──
   checkY(30);
   doc.setFont("helvetica","bold"); doc.setFontSize(10);
-  doc.text("Sound Power Level (SWL) per Octave Band",margin,y); y+=6;
+  const pdfCombSWL = combineEquipmentSWL(pdfGens);
+  doc.text(pdfGens.length>1?"Combined SWL per Octave Band — Logarithmic Sum":"Sound Power Level (SWL) per Octave Band",margin,y); y+=6;
   doc.setDrawColor(14,159,142); doc.line(margin,y,pw-margin,y); y+=5;
   autoTable(doc,{
     startY:y, margin:{left:margin,right:margin},
     head:[["Band (Hz)",...BANDS.map(String)]],
-    body:[["SWL (dB)",...BAND_KEYS.map(k=>fmt2(Number(form.generator.swl?.[k])||0))]],
+    body:[["SWL (dB)",...BAND_KEYS.map(k=>fmt2(Number(pdfCombSWL[k])||0))]],
     styles:{fontSize:8,cellPadding:2,halign:"center"},
     headStyles:{fillColor:[71,85,105],textColor:255,fontStyle:"bold"},
     theme:"grid",
@@ -1736,16 +1846,23 @@ async function downloadWord(form, liveLp, project) {
     ], tealShade),
     spacer(),
 
-    // Equipment
+    // Equipment — list all equipment entries
     heading("Equipment Details",2),
+    ...((form.generators && form.generators.length > 0 ? form.generators : [form.generator]).flatMap((gen, idx) => [
+      new Paragraph({ children:[boldRun(`${form.equipmentType||"Equipment"} #${idx+1}`)], spacing:{before:idx===0?0:120,after:60} }),
+      infoTable([
+        ["Parameter","Value"],
+        ["Equipment ID", gen.equipmentId||"—"],
+        ["Model Number", gen.modelNumber||"—"],
+        ["Rated kVA", String(gen.ratedKva||"—")],
+        ["Building Ref", gen.buildingRef||"—"],
+        ["Overall SWL", `${gen.swl_dba||"—"} dB(A)`],
+        ["Noise Input Type", gen.noiseInputType||"—"],
+      ], tealShade),
+      spacer(),
+    ])),
     infoTable([
       ["Parameter","Value"],
-      ["Equipment ID", form.generator.equipmentId||"—"],
-      ["Model Number", form.generator.modelNumber||"—"],
-      ["Rated kVA", String(form.generator.ratedKva||"—")],
-      ["Building Ref", form.generator.buildingRef||"—"],
-      ["Overall SWL", `${form.generator.swl_dba||"—"} dB(A)`],
-      ["Noise Input Type", form.generator.noiseInputType||"—"],
       ["Noise Path", NOISE_PATH_LABEL[form.noisePath]||form.noisePath],
       ["Receiver Description", form.receiver.description||"—"],
       ["Noise Criterion", form.receiver.ncNrChoice],
@@ -1753,9 +1870,12 @@ async function downloadWord(form, liveLp, project) {
     ], tealShade),
     spacer(),
 
-    // SWL per band
-    heading("Sound Power Level (SWL) per Octave Band",2),
-    bandTable(["Band (Hz)",...BANDS.map(String)],[["SWL (dB)",...BAND_KEYS.map(k=>fmt2(Number(form.generator.swl?.[k])||0))]],grayShade),
+    // SWL per band — combined (logarithmic sum if multiple equipment)
+    heading((form.generators&&form.generators.length>1)?"Combined SWL per Octave Band — Logarithmic Sum [10·log₁₀(Σ 10^(SWL/10))]":"Sound Power Level (SWL) per Octave Band",2),
+    (() => {
+      const combinedSWLw = (form.generators && form.generators.length > 0) ? combineEquipmentSWL(form.generators) : form.generator.swl;
+      return bandTable(["Band (Hz)",...BANDS.map(String)],[["SWL (dB)",...BAND_KEYS.map(k=>fmt2(Number(combinedSWLw[k])||0))]],grayShade);
+    })(),
     spacer(),
 
     // Ducts
@@ -1847,6 +1967,9 @@ const PATH_KEYS = ["exhaust","intake","through_wall","through_door","through_cei
 
 export default function AcousticInputForm({ projectId, existing, onSaved, onResults, project }) {
 
+  // ── Equipment Type — global (not per-path) ────────────────────────────
+  const [equipmentType, setEquipmentType] = useState(existing?.equipmentType ?? "DG");
+
   // ── Per-path independent state ────────────────────────────────────────
   // Each path key holds its own complete copy of DEFAULT (fully independent).
   // Changing values in exhaust never touches intake, wall, door, etc.
@@ -1868,11 +1991,20 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
       init[pk] = {
         ...DEFAULT,
         noisePath: pk,
+        equipmentType: existing.equipmentType ?? "DG",
         generator: {
           ...DEFAULT.generator, ...g,
           rawBand,
           swl: computeSWLFromRaw(noiseInputType, rawBand, measurementDistance_m),
         },
+        generators: Array.isArray(existing.generators) && existing.generators.length
+          ? existing.generators.map(eg => {
+              const eRaw = eg.rawBand ?? eg.swl ?? { ...EMPTY_BAND };
+              const eType = eg.noiseInputType ?? "swl_db";
+              const eDist = eg.measurementDistance_m ?? 1;
+              return { ...defaultEquipment(), ...eg, rawBand: eRaw, swl: computeSWLFromRaw(eType, eRaw, eDist) };
+            })
+          : [{ ...DEFAULT.generator, ...g, rawBand, swl: computeSWLFromRaw(noiseInputType, rawBand, measurementDistance_m) }],
         room:           { ...DEFAULT.room, distance_m:3, ...existing.room },
         ducts,
         erl:            { ...DEFAULT.erl, ...existing.erl },
@@ -1939,6 +2071,27 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
     g.swl = computeSWLFromRaw(g.noiseInputType, v, g.measurementDistance_m);
     return {...f, generator:g};
   }), [setForm]);
+
+  // Multi-equipment setters
+  const setGenField = (idx, k, v) => setForm(f => {
+    const gens = [...(f.generators || [defaultEquipment()])];
+    const g = { ...gens[idx], [k]: v };
+    g.swl = computeSWLFromRaw(g.noiseInputType, g.rawBand, g.measurementDistance_m);
+    gens[idx] = g;
+    return { ...f, generators: gens };
+  });
+  const setGenBand = useCallback((idx, v) => setForm(f => {
+    const gens = [...(f.generators || [defaultEquipment()])];
+    const g = { ...gens[idx], rawBand: v };
+    g.swl = computeSWLFromRaw(g.noiseInputType, v, g.measurementDistance_m);
+    gens[idx] = g;
+    return { ...f, generators: gens };
+  }), [setForm]);
+  const addEquipment = () => setForm(f => ({ ...f, generators: [...(f.generators||[]), defaultEquipment()] }));
+  const removeEquipment = (idx) => setForm(f => {
+    const gens = (f.generators||[]).filter((_,i) => i !== idx);
+    return { ...f, generators: gens.length ? gens : [defaultEquipment()] };
+  });
   const setRm  = (k,v) => setForm(f=>({...f, room:{...f.room,[k]:v}}));
   const setErl = (k,v) => setForm(f=>({...f, erl:{...f.erl,[k]:v}}));
   const setA   = (k,v) => setForm(f=>({...f, attenuator:{...f.attenuator,[k]:v}}));
@@ -1975,6 +2128,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
   // Strip internal UI keys before sending to backend
   const buildPayload = () => ({
     ...form,
+    equipmentType,   // top-level state — always current
     ducts: form.ducts.map(({_showCoeff,_showElbow,...d})=>d),
   });
 
@@ -2024,6 +2178,37 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         input[type=number] { -moz-appearance:textfield; }
       `}</style>
 
+      {/* ── Equipment Type Toggle — DG | Pump ── */}
+      <div style={{ background:"#fff", borderRadius:12, border:"1px solid #E2E8F0", padding:"13px 16px" }}>
+        <p style={{ fontSize:11, fontWeight:700, color:"#475569", textTransform:"uppercase", letterSpacing:".05em", fontFamily:"Inter,sans-serif", margin:"0 0 10px" }}>
+          Equipment Type
+        </p>
+        <div style={{ display:"flex", gap:8 }}>
+          {[{ value:"DG", label:"DG (Generator)" }, { value:"Pump", label:"Pump" }].map(et => (
+            <button key={et.value} type="button"
+              onClick={() => {
+                setEquipmentType(et.value);
+                // If switching to Pump and current tab is exhaust/intake, switch to through_wall
+                if (et.value === "Pump" && ["exhaust","intake"].includes(activePathKey)) {
+                  setActivePathKey("through_wall");
+                }
+              }}
+              style={{
+                padding:"8px 22px", borderRadius:8,
+                border:`1.5px solid ${equipmentType===et.value?"#0E9F8E":"#E2E8F0"}`,
+                background:equipmentType===et.value?"#E3F8F5":"#fff",
+                color:equipmentType===et.value?"#0E9F8E":"#64748B",
+                fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"Inter,sans-serif", transition:"all .15s",
+              }}>{et.label}</button>
+          ))}
+        </div>
+        {equipmentType === "Pump" && (
+          <p style={{ fontSize:10.5, color:"#F59E0B", margin:"8px 0 0", fontFamily:"Inter,sans-serif" }}>
+            <strong>Pump mode:</strong> Exhaust Air and Intake Air paths are hidden.
+          </p>
+        )}
+      </div>
+
       {/* ── Noise Path Tabs — each tab is fully independent ── */}
       <div style={{ background:"#fff", borderRadius:12, border:"1px solid #E2E8F0", padding:"13px 16px" }}>
         <p style={{ fontSize:11, fontWeight:700, color:"#475569", textTransform:"uppercase", letterSpacing:".05em", fontFamily:"Inter,sans-serif", margin:"0 0 10px" }}>
@@ -2033,17 +2218,19 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
           </span>
         </p>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-          {NOISE_PATHS.map(p=>(
-            <button key={p.value} type="button"
-              onClick={()=>setActivePathKey(p.value)}
-              style={{
-                padding:"7px 16px", borderRadius:8,
-                border:`1.5px solid ${activePathKey===p.value?"#0E9F8E":"#E2E8F0"}`,
-                background:activePathKey===p.value?"#E3F8F5":"#fff",
-                color:activePathKey===p.value?"#0E9F8E":"#64748B",
-                fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"Inter,sans-serif", transition:"all .15s",
-              }}>{p.label}</button>
-          ))}
+          {NOISE_PATHS
+            .filter(p => equipmentType === "Pump" ? !["exhaust","intake"].includes(p.value) : true)
+            .map(p=>(
+              <button key={p.value} type="button"
+                onClick={()=>setActivePathKey(p.value)}
+                style={{
+                  padding:"7px 16px", borderRadius:8,
+                  border:`1.5px solid ${activePathKey===p.value?"#0E9F8E":"#E2E8F0"}`,
+                  background:activePathKey===p.value?"#E3F8F5":"#fff",
+                  color:activePathKey===p.value?"#0E9F8E":"#64748B",
+                  fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"Inter,sans-serif", transition:"all .15s",
+                }}>{p.label}</button>
+            ))}
         </div>
         <p style={{ fontSize:10.5, color:"#94A3B8", margin:"8px 0 0", fontFamily:"Inter,sans-serif" }}>
           Active: <strong style={{ color:"#0E9F8E" }}>{NOISE_PATHS.find(p=>p.value===activePathKey)?.label}</strong>
@@ -2051,65 +2238,145 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
         </p>
       </div>
 
-      {/* ── 1. Generator ── */}
-      <Section icon={Zap} title="Generator Data" color="#0E9F8E">
-        <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-          <div style={g2}>
-            <TextInput label="Equipment ID" value={form.generator.equipmentId} onChange={v=>setG("equipmentId",v)} placeholder="e.g. 1100KVA STANDBY GEN"/>
-            <TextInput label="Model Number" value={form.generator.modelNumber}  onChange={v=>setG("modelNumber",v)}  placeholder="e.g. 12M26D968E200"/>
-          </div>
-          <div style={g3}>
-            <NumInput  label="Rated kVA"    value={form.generator.ratedKva}    onChange={v=>setG("ratedKva",v)}    unit="kVA" step={1}/>
-            <NumInput  label="Overall SWL"  value={form.generator.swl_dba}     onChange={v=>setG("swl_dba",v)}     unit="dB(A)" step={0.1}/>
-            <TextInput label="Building Ref" value={form.generator.buildingRef} onChange={v=>setG("buildingRef",v)} placeholder="e.g. Ground Floor"/>
-          </div>
+      {/* ── 1. Equipment Data (Multi-Equipment) ── */}
+      <Section icon={Zap} title={equipmentType === "Pump" ? "Pump Data" : "Generator Data"} color="#0E9F8E">
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
 
-          {/* Noise Data Type — simple segmented buttons (same as existing form) */}
-          <div>
-            <p style={{ fontSize:12, fontWeight:700, color:"#334155", fontFamily:"Plus Jakarta Sans,sans-serif", margin:"0 0 8px" }}>Noise Data Type</p>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              {NOISE_INPUT_TYPES.map(t => (
-                <button key={t.value} type="button" onClick={()=>setG("noiseInputType",t.value)}
-                  style={{
-                    padding:"7px 14px", borderRadius:8,
-                    border:`1.5px solid ${form.generator.noiseInputType===t.value?"#0E9F8E":"#E2E8F0"}`,
-                    background:form.generator.noiseInputType===t.value?"#E3F8F5":"#fff",
-                    color:form.generator.noiseInputType===t.value?"#0E9F8E":"#64748B",
-                    fontSize:13, fontWeight:600, cursor:"pointer",
-                    fontFamily:"Inter,sans-serif", transition:"all .15s",
-                  }}>{t.label}</button>
-              ))}
-            </div>
-          </div>
+          {/* Equipment cards — DG: single card only; Pump: multiple */}
+          {(form.generators || [defaultEquipment()]).slice(0, equipmentType === "DG" ? 1 : undefined).map((gen, idx) => (
+            <div key={idx} style={{ background:"#F8FAFC", borderRadius:12, border:"1.5px solid #E2E8F0", padding:"16px" }}>
+              {/* Card header — only shown for Pump (multi-equipment) */}
+              {equipmentType === "Pump" && (
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+                <span style={{ fontSize:13, fontWeight:700, color:"#0E9F8E", fontFamily:"Inter,sans-serif" }}>
+                  Pump #{idx + 1}
+                </span>
+                {(form.generators || []).length > 1 && (
+                  <button type="button" onClick={() => removeEquipment(idx)}
+                    style={{
+                      display:"flex", alignItems:"center", gap:4,
+                      padding:"4px 10px", borderRadius:7, border:"1px solid #FCA5A5",
+                      background:"#FEF2F2", color:"#EF4444", fontSize:12, fontWeight:600,
+                      cursor:"pointer", fontFamily:"Inter,sans-serif",
+                    }}>
+                    <Trash2 size={13}/> Remove
+                  </button>
+                )}
+              </div>
+              )}
 
-          {/* Measurement distance — only for SPL modes */}
-          {needsDistance && (
-            <div style={{ maxWidth:220 }}>
-              <NumInput label="Measurement Distance (r)" value={form.generator.measurementDistance_m}
-                onChange={v=>setG("measurementDistance_m",v)} unit="m" step={0.1} min={0.1}/>
+              {/* Fields */}
+              <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                <div style={g2}>
+                  <TextInput label="Equipment ID" value={gen.equipmentId} onChange={v=>setGenField(idx,"equipmentId",v)} placeholder="e.g. 1100KVA STANDBY GEN"/>
+                  <TextInput label="Model Number" value={gen.modelNumber}  onChange={v=>setGenField(idx,"modelNumber",v)}  placeholder="e.g. 12M26D968E200"/>
+                </div>
+                <div style={g3}>
+                  <NumInput  label="Rated kVA"    value={gen.ratedKva}    onChange={v=>setGenField(idx,"ratedKva",v)}    unit="kVA" step={1}/>
+                  <NumInput  label="Overall SWL"  value={gen.swl_dba}     onChange={v=>setGenField(idx,"swl_dba",v)}     unit="dB(A)" step={0.1}/>
+                  <TextInput label="Building Ref" value={gen.buildingRef} onChange={v=>setGenField(idx,"buildingRef",v)} placeholder="e.g. Ground Floor"/>
+                </div>
+
+                {/* Noise Data Type */}
+                <div>
+                  <p style={{ fontSize:12, fontWeight:700, color:"#334155", fontFamily:"Plus Jakarta Sans,sans-serif", margin:"0 0 8px" }}>Noise Data Type</p>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                    {NOISE_INPUT_TYPES.map(t => (
+                      <button key={t.value} type="button" onClick={()=>setGenField(idx,"noiseInputType",t.value)}
+                        style={{
+                          padding:"7px 14px", borderRadius:8,
+                          border:`1.5px solid ${gen.noiseInputType===t.value?"#0E9F8E":"#E2E8F0"}`,
+                          background:gen.noiseInputType===t.value?"#E3F8F5":"#fff",
+                          color:gen.noiseInputType===t.value?"#0E9F8E":"#64748B",
+                          fontSize:13, fontWeight:600, cursor:"pointer",
+                          fontFamily:"Inter,sans-serif", transition:"all .15s",
+                        }}>{t.label}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Measurement distance — only for SPL modes */}
+                {DISTANCE_MODES.includes(gen.noiseInputType) && (
+                  <div style={{ maxWidth:220 }}>
+                    <NumInput label="Measurement Distance (r)" value={gen.measurementDistance_m}
+                      onChange={v=>setGenField(idx,"measurementDistance_m",v)} unit="m" step={0.1} min={0.1}/>
+                  </div>
+                )}
+
+                {/* Octave Band Input */}
+                <div style={{ background:"#fff", borderRadius:10, padding:"14px 16px", border:"1px solid #E2E8F0" }}>
+                  <BandGrid
+                    label={{
+                      swl_dba:"SWL per Band — dB(A)",
+                      spl_db: "SPL per Band — dB @ measurement distance r",
+                      spl_dba:"SPL per Band — dB(A) @ measurement distance r",
+                      swl_db: "SWL per Band — dB re 1pW",
+                    }[gen.noiseInputType]}
+                    values={gen.rawBand}
+                    onChange={v => setGenBand(idx, v)}
+                  />
+                  <ConversionPreviewTable
+                    noiseInputType={gen.noiseInputType}
+                    rawBand={gen.rawBand}
+                    distance_m={gen.measurementDistance_m}
+                    resultBand={gen.swl}
+                  />
+                </div>
+              </div>
             </div>
+          ))}
+
+          {/* Add Equipment button — Pump only */}
+          {equipmentType === "Pump" && (
+            <button type="button" onClick={addEquipment}
+              style={{
+                display:"flex", alignItems:"center", gap:6,
+                padding:"9px 18px", borderRadius:9, border:"1.5px dashed #0E9F8E",
+                background:"#E3F8F5", color:"#0E9F8E", fontSize:13, fontWeight:700,
+                cursor:"pointer", fontFamily:"Inter,sans-serif", alignSelf:"flex-start",
+                transition:"all .15s",
+              }}>
+              <Plus size={16}/> Add Pump
+            </button>
           )}
 
-          {/* Octave Band Input */}
-          <div style={{ background:"#F8FAFC", borderRadius:10, padding:"14px 16px", border:"1px solid #E2E8F0" }}>
-            <BandGrid
-              label={{
-                swl_dba:"SWL per Band — dB(A)",
-                spl_db: "SPL per Band — dB @ measurement distance r",
-                spl_dba:"SPL per Band — dB(A) @ measurement distance r",
-                swl_db: "SWL per Band — dB re 1pW",
-              }[form.generator.noiseInputType]}
-              values={form.generator.rawBand}
-              onChange={setGW}
-            />
-            {/* Conversion preview table — shows step-by-step conversion for non-SWL-dB types */}
-            <ConversionPreviewTable
-              noiseInputType={form.generator.noiseInputType}
-              rawBand={form.generator.rawBand}
-              distance_m={form.generator.measurementDistance_m}
-              resultBand={form.generator.swl}
-            />
-          </div>
+          {/* Combined SWL preview — Pump only, when multiple equipment */}
+          {equipmentType === "Pump" && (form.generators || []).length > 1 && (() => {
+            const combined = combineEquipmentSWL(form.generators || []);
+            return (
+              <div style={{ background:"#ECFDF5", borderRadius:10, padding:"14px 16px", border:"1px solid #A7F3D0" }}>
+                <p style={{ fontSize:11, fontWeight:700, color:"#065F46", margin:"0 0 12px", fontFamily:"Inter,sans-serif", textTransform:"uppercase", letterSpacing:".04em" }}>
+                  Combined SWL — Logarithmic Sum &nbsp;
+                  <span style={{ fontWeight:400, textTransform:"none", letterSpacing:0, color:"#059669" }}>
+                    [10·log₁₀(Σ 10^(SWL/10))]
+                  </span>
+                </p>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ borderCollapse:"collapse", width:"100%", minWidth:580, fontFamily:"Inter,sans-serif", fontSize:12 }}>
+                    <thead>
+                      <tr>
+                        {BANDS.map(b => (
+                          <th key={b} style={{ border:"1px solid #A7F3D0", padding:"6px 8px", background:"#D1FAE5", color:"#065F46", textAlign:"center", fontWeight:700 }}>{b} Hz</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        {BAND_KEYS.map(k => (
+                          <td key={k} style={{ border:"1px solid #A7F3D0", padding:"7px 8px", textAlign:"center", fontWeight:700, color:"#065F46", background:"#ECFDF5" }}>
+                            {fmt2(Number(combined[k]) || 0)}
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <p style={{ fontSize:10.5, color:"#059669", margin:"8px 0 0", fontFamily:"Inter,sans-serif" }}>
+                  This combined SWL is used for all downstream calculations.
+                </p>
+              </div>
+            );
+          })()}
         </div>
       </Section>
 
@@ -3210,7 +3477,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
       {showDownloadModal && (
         <DownloadModal
           onClose={()=>setShowDownloadModal(false)}
-          allForms={forms}
+          allForms={Object.fromEntries(Object.entries(forms).map(([k,f])=>([k,{...f,equipmentType}])))}
           allLiveLp={allLiveLp}
           project={project}
         />
