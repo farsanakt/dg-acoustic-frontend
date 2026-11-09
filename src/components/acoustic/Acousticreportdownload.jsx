@@ -145,11 +145,146 @@ function calcNCRating(lpArr){
   for(const {nc,vals} of NC_TABLE){ if(!lpArr.some((v,i)=>v>vals[i])) return nc; }
   return ">80";
 }
-const NR_A=[55.4,35.5,22.0,12.0,4.8,0.0,-3.5,-6.1];
-const NR_B=[0.681,0.790,0.870,0.930,0.974,1.000,1.015,1.025];
+/* NR Table — exact values from Table 5: Sound Pressure Level For Each NR Level */
+const NR_ROWS=[
+  {nr:0,  left:[36,22,12,5,0,-4,-6,-8]},
+  {nr:1,  left:[36.7,22.9,12.9,6,1,-2.9,-5,-7]},
+  {nr:2,  left:[37.4,23.8,13.8,7,2,-1.8,-4,-6]},
+  {nr:3,  left:[38.1,24.7,14.7,8,3,-0.7,-3,-5]},
+  {nr:4,  left:[38.8,25.6,15.6,9,4,0.4,-2,-4]},
+  {nr:5,  left:[39.5,26.5,16.5,10,5,1.5,-1,-3]},
+  {nr:6,  left:[40.2,27.4,17.4,11,6,2.6,0,-2]},
+  {nr:7,  left:[40.9,28.3,18.3,12,7,3.7,1,-1]},
+  {nr:8,  left:[41.6,29.2,19.2,13,8,4.8,2,0]},
+  {nr:9,  left:[42.3,30.1,20.1,14,9,5.9,3,1]},
+  {nr:10, left:[43,31,21,15,10,7,4,2]},
+  {nr:11, left:[43.8,31.8,22,15.9,11,8,5,3.1]},
+  {nr:12, left:[44.6,32.6,23,16.8,12,9,6,4.2]},
+  {nr:13, left:[45.4,33.4,24,17.7,13,10,7,5.3]},
+  {nr:14, left:[46.2,34.2,25,18.6,14,11,8,6.4]},
+  {nr:15, left:[47,35,26,19.5,15,12,9,7.5]},
+  {nr:16, left:[47.8,35.8,27,20.4,16,13,10,8.6]},
+  {nr:17, left:[48.6,36.6,28,21.3,17,14,11,9.7]},
+  {nr:18, left:[49.4,37.4,29,22.2,18,15,12,10.8]},
+  {nr:19, left:[50.2,38.2,30,23.1,19,16,13,11.9]},
+  {nr:20, left:[51,39,31,24,20,17,14,13]},
+  {nr:21, left:[51.8,39.9,31.9,25,21,18,15.1,14]},
+  {nr:22, left:[52.6,40.8,32.8,26,22,19,16.2,15]},
+  {nr:23, left:[53.4,41.7,33.7,27,23,20,17.3,16]},
+  {nr:24, left:[54.2,42.6,34.6,28,24,21,18.4,17]},
+  {nr:25, left:[55,43.5,35.5,29,25,22,19.5,18]},
+  {nr:26, left:[55.8,44.4,36.4,30,26,23,20.6,19]},
+  {nr:27, left:[56.6,45.3,37.3,31,27,24,21.7,20]},
+  {nr:28, left:[57.4,46.2,38.2,32,28,25,22.8,21]},
+  {nr:29, left:[58.2,47.1,39.1,33,29,26,23.9,22]},
+  {nr:30, left:[59,48,40,34,30,27,25,23]},
+  {nr:31, left:[59.8,48.9,40.9,35,31,28,26,24]},
+  {nr:32, left:[60.6,49.8,41.8,36,32,29,27,25]},
+  {nr:33, left:[61.4,50.7,42.7,37,33,30,28,26]},
+  {nr:34, left:[62.2,51.6,43.6,38,34,31,29,27]},
+  {nr:35, left:[63,52.5,44.5,39,35,32,30,28]},
+  {nr:36, left:[63.8,53.4,45.4,40,36,33,31,29]},
+  {nr:37, left:[64.6,54.3,46.3,41,37,34,32,30]},
+  {nr:38, left:[65.4,55.2,47.2,42,38,35,33,31]},
+  {nr:39, left:[66.2,56.1,48.1,43,39,36,34,32]},
+  {nr:40, left:[67,57,49,44,40,37,35,33]},
+  {nr:41, left:[67.8,57.9,50,45,41,38,36,34.1]},
+  {nr:42, left:[68.6,58.8,51,46,42,39,37,35.2]},
+  {nr:43, left:[69.4,59.7,52,47,43,40,38,36.3]},
+  {nr:44, left:[70.2,60.6,53,48,44,41,39,37.4]},
+  {nr:45, left:[71,61.5,54,49,45,42,40,38.5]},
+  {nr:46, left:[71.8,62.4,55,50,46,43,41,39.6]},
+  {nr:47, left:[72.6,63.3,56,51,47,44,42,40.7]},
+  {nr:48, left:[73.4,64.2,57,52,48,45,43,41.8]},
+  {nr:49, left:[74.2,65.1,58,53,49,46,44,42.9]},
+  {nr:50, left:[75,66,59,54,50,47,45,44]},
+  {nr:51, left:[75.8,66.8,59.9,54.9,51,48,46,45]},
+  {nr:52, left:[76.6,67.6,60.8,55.8,52,49,47,46]},
+  {nr:53, left:[77.4,68.4,61.7,56.7,53,50,48,47]},
+  {nr:54, left:[78.2,69.2,62.6,57.6,54,51,49,48]},
+  {nr:55, left:[79,70,63.5,58.5,55,52,50,49]},
+  {nr:56, left:[79.8,70.8,64.4,59.4,56,53,51,50]},
+  {nr:57, left:[80.6,71.6,65.3,60.3,57,54,52,51]},
+  {nr:58, left:[81.4,72.4,66.2,61.2,58,55,53,52]},
+  {nr:59, left:[82.2,73.2,67.1,62.1,59,56,54,53]},
+  {nr:60, left:[83,74,68,63,60,57,55,54]},
+  {nr:61, left:[83.8,74.9,68.9,64,61,58.1,56.1,55]},
+  {nr:62, left:[84.6,75.8,69.8,65,62,59.2,57.2,56]},
+  {nr:63, left:[85.4,76.7,70.7,66,63,60.3,58.3,57]},
+  {nr:64, left:[86.2,77.6,71.6,67,64,61.4,59.4,58]},
+  {nr:65, left:[87,78.5,72.5,68,65,62.5,60.5,59]},
+  {nr:66, left:[87.8,79.4,73.4,69,66,63.6,61.6,60]},
+  {nr:67, left:[88.6,80.3,74.3,70,67,64.7,62.7,61]},
+  {nr:68, left:[89.4,81.2,75.2,71,68,65.8,63.8,62]},
+  {nr:69, left:[90.2,82.1,76.1,72,69,66.9,64.9,63]},
+  {nr:70, left:[91,83,77,73,70,68,66,64]},
+  {nr:71, left:[91.8,83.9,77.9,74,71,69,67,65]},
+  {nr:72, left:[92.6,84.8,78.8,75,72,70,68,66]},
+  {nr:73, left:[93.4,85.7,79.7,76,73,71,69,67]},
+  {nr:74, left:[94.2,86.6,80.6,77,74,72,70,68]},
+  {nr:75, left:[95,87.5,81.5,78,75,73,71,69]},
+  {nr:76, left:[95.8,88.4,82.4,79,76,74,72,70]},
+  {nr:77, left:[96.6,89.3,83.3,80,77,75,73,71]},
+  {nr:78, left:[97.4,90.2,84.2,81,78,76,74,72]},
+  {nr:79, left:[98.2,91.1,85.1,82,79,77,75,73]},
+  {nr:80, left:[99,92,86,83,80,78,76,74]},
+  {nr:81, left:[99.8,92.8,87,84,81,79,77,75.1]},
+  {nr:82, left:[100.6,93.6,88,85,82,80,78,76.2]},
+  {nr:83, left:[101.4,94.4,89,86,83,81,79,77.3]},
+  {nr:84, left:[102.2,95.2,90,87,84,82,80,78.4]},
+  {nr:85, left:[103,96,91,88,85,83,81,79.5]},
+  {nr:86, left:[103.8,96.8,92,89,86,84,82,80.6]},
+  {nr:87, left:[104.6,97.6,93,90,87,85,83,81.7]},
+  {nr:88, left:[105.4,98.4,94,91,88,86,84,82.8]},
+  {nr:89, left:[106.2,99.2,95,92,89,87,85,83.9]},
+  {nr:90, left:[107,100,96,93,90,88,86,85]},
+  {nr:91, left:[107.8,100.9,96.9,93.9,91,89,87,86]},
+  {nr:92, left:[108.6,101.8,97.8,94.8,92,90,88,87]},
+  {nr:93, left:[109.4,102.7,98.7,95.7,93,91,89,88]},
+  {nr:94, left:[110.2,103.6,99.6,96.6,94,92,90,89]},
+  {nr:95, left:[111,104.5,100.5,97.5,95,93,91,90]},
+  {nr:96, left:[111.8,105.4,101.4,98.4,96,94,92,91]},
+  {nr:97, left:[112.6,106.3,102.3,99.3,97,95,93,92]},
+  {nr:98, left:[113.4,107.2,103.2,100.2,98,96,94,93]},
+  {nr:99, left:[114.2,108.1,104.1,101.1,99,97,95,94]},
+  {nr:100,left:[115,109,105,102,100,98,96,95]},
+  {nr:101,left:[115.7,109.9,105.9,103,101,99,97.1,96]},
+  {nr:102,left:[116.4,110.8,106.8,104,102,100,98.2,97]},
+  {nr:103,left:[117.1,111.7,107.7,105,103,101,99.3,98]},
+  {nr:104,left:[117.8,112.6,108.6,106,104,102,100.4,99]},
+  {nr:105,left:[118.5,113.5,109.5,107,105,103,101.5,100]},
+  {nr:106,left:[119.2,114.4,110.4,108,106,104,102.6,101]},
+  {nr:107,left:[119.9,115.3,111.3,109,107,105,103.7,102]},
+  {nr:108,left:[120.6,116.2,112.2,110,108,106,104.8,103]},
+  {nr:109,left:[121.3,117.1,113.1,111,109,107,105.9,104]},
+  {nr:110,left:[122,118,114,112,110,108,107,105]},
+  {nr:111,left:[122.8,118.8,115,113,111,109,108,106.1]},
+  {nr:112,left:[123.6,119.6,116,114,112,110,109,107.2]},
+  {nr:113,left:[124.4,120.4,117,115,113,111,110,108.3]},
+  {nr:114,left:[125.2,121.2,118,116,114,112,111,109.4]},
+  {nr:115,left:[126,122,119,117,115,113,112,110.5]},
+  {nr:116,left:[126.8,122.8,120,118,116,114,113,111.6]},
+  {nr:117,left:[127.6,123.6,121,119,117,115,114,112.7]},
+  {nr:118,left:[128.4,124.4,122,120,118,116,115,113.8]},
+  {nr:119,left:[129.2,125.2,123,121,119,117,116,114.9]},
+  {nr:120,left:[130,126,124,122,120,118,117,116]},
+  {nr:121,left:[130.8,126.9,124.9,122.9,121,119,118,117]},
+  {nr:122,left:[131.6,127.8,125.8,123.8,122,120,119,118]},
+  {nr:123,left:[132.4,128.7,126.7,124.7,123,121,120,119]},
+  {nr:124,left:[133.2,129.6,127.6,125.6,124,122,121,120]},
+  {nr:125,left:[134,130.5,128.5,126.5,125,123,122,121]},
+  {nr:126,left:[134.8,131.4,129.4,127.4,126,124,123,122]},
+  {nr:127,left:[135.6,132.3,130.3,128.3,127,125,124,123]},
+  {nr:128,left:[136.4,133.2,131.2,129.2,128,126,125,124]},
+  {nr:129,left:[137.2,134.1,132.1,130.1,129,127,126,125]},
+  {nr:130,left:[138,135,133,131,130,128,127,126]},
+];
+function findRowByNR(nr){ const v=Number(nr)||0; return NR_ROWS.reduce((best,row)=>Math.abs(row.nr-v)<Math.abs(best.nr-v)?row:best); }
+function getNRCriteria(nr){ return findRowByNR(nr).left; }
 function calcNRRating(lpArr){
-  for(let n=0;n<=100;n++){ const c=NR_A.map((a,i)=>a+NR_B[i]*n); if(!lpArr.some((v,i)=>v>c[i])) return n; }
-  return ">100";
+  const sorted=[...NR_ROWS].sort((a,b)=>a.nr-b.nr);
+  for(const row of sorted){ if(!lpArr.some((v,i)=>v>row.left[i])) return row.nr; }
+  return ">130";
 }
 function totalDBA(arr){
   const s=arr.reduce((a,v,i)=>a+Math.pow(10,((Number(v)||0)+A_WEIGHT[i])/10),0);
@@ -242,8 +377,29 @@ th{background:#d9d9d9;font-weight:bold;text-align:center}
 const TOTAL_COLS = 13;
 const N_BANDS    = 8;
 
+/* Local combineEquipmentSWL for download component */
+function combineEquipmentSWL(generators){
+  if(!generators||!generators.length) return Object.fromEntries(BAND_KEYS.map(k=>[k,0]));
+  if(generators.length===1) return Object.fromEntries(BAND_KEYS.map(k=>[k,Number(generators[0].swl?.[k])||0]));
+  const combined={};
+  BAND_KEYS.forEach(k=>{
+    const sum=generators.reduce((acc,g)=>{
+      const v=Number(g.swl?.[k])||0;
+      return acc+Math.pow(10,v/10);
+    },0);
+    combined[k]=10*Math.log10(sum);
+  });
+  return combined;
+}
+
 function buildSinglePathHTML(form, liveLp, project, pathNum){
-  const g   = form.generator      || {};
+  /* Support both single generator (legacy) and generators array (multi-equip) */
+  const equipType = form.equipmentType || "DG";
+  const generators = Array.isArray(form.generators) && form.generators.length>0
+    ? form.generators
+    : (form.generator ? [form.generator] : [{}]);
+  const combinedSWL = combineEquipmentSWL(generators);
+  const g   = generators[0]            || {};
   const rec = form.receiver       || {};
   const rm  = form.room           || {};
   const de  = form.distanceEffect || {};
@@ -266,7 +422,7 @@ function buildSinglePathHTML(form, liveLp, project, pathNum){
   const reqDBA = Number(rec.required_dba)|| 65;
 
   /* ── derived arrays ── */
-  const swlArr   = BAND_KEYS.map(k=>Number(g.swl?.[k])||0);
+  const swlArr   = BAND_KEYS.map(k=>Number(combinedSWL[k])||0);
   const Z8       = BANDS.map(()=>0);
   const attILArr = BAND_KEYS.map(k=>Number(att.il?.[k])||0);
   const hasAtt   = attILArr.some(v=>v>0);
@@ -343,7 +499,7 @@ function buildSinglePathHTML(form, liveLp, project, pathNum){
   // dbaB and dbaA already equal 10·log10(Σ10^((Lp+Aw)/10)) via totalDBA()
 
   const ncCrit    = getNCCriteria(reqNC);
-  const nrCrit    = NR_A.map((a,i)=>a+NR_B[i]*reqNR);
+  const nrCrit    = getNRCriteria(reqNR);
   const ncRating  = calcNCRating(lpBefore);
   const nrRating  = calcNRRating(lpBefore);
   const ncRatingA = calcNCRating(lpAfter);
@@ -452,7 +608,7 @@ function buildSinglePathHTML(form, liveLp, project, pathNum){
     */
 
     // 1. SWL
-    mainRows+=dataRow("GENERATOR SOUND POWER LEVEL","","","","",swlArr,"bold",false,true);
+    mainRows+=dataRow(`${equipType==="Pump"?"PUMP":"GENERATOR"} SOUND POWER LEVEL (Combined)`.trim(),"","","","",swlArr,"bold",false,true);
 
     // 2. Duct IL rows
     ductRows.forEach(dr=>{
@@ -531,7 +687,7 @@ function buildSinglePathHTML(form, liveLp, project, pathNum){
     */
 
     // 1. SWL
-    mainRows+=dataRow("GENERATOR SOUND POWER LEVEL","","","","",swlArr,"bold",false,true);
+    mainRows+=dataRow(`${equipType==="Pump"?"PUMP":"GENERATOR"} SOUND POWER LEVEL (Combined)`.trim(),"","","","",swlArr,"bold",false,true);
 
     // 2. Distance / Room Correction
     if(distArr.some(v=>v!==0)){
@@ -703,9 +859,10 @@ ${attTable}
 /* ═══════════════════════════════════════════════════════
    COMBINED HTML REPORT
 ═══════════════════════════════════════════════════════ */
-export function buildCombinedHTMLReport(allForms, allLiveLp, project){
+export function buildCombinedHTMLReport(allForms, allLiveLp, project, equipmentType){
+  const eqType=equipmentType||(allForms[Object.keys(allForms)[0]]?.equipmentType)||"DG";
   const ORDER=["exhaust","intake","through_wall","through_door","through_ceiling_above","through_ceiling_below"];
-  const active=ORDER.filter(p=>allForms[p]);
+  const active=ORDER.filter(p=>allForms[p]&&!(eqType==="Pump"&&DUCT_PATHS.includes(p)));
   const sheets=active.map((p,i)=>buildSinglePathHTML(allForms[p],allLiveLp[p]||{},project,i+1)).join("\n");
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
@@ -718,8 +875,8 @@ export function buildCombinedHTMLReport(allForms, allLiveLp, project){
    PDF DOWNLOAD — opens print dialog in new tab
    Colors print because of -webkit-print-color-adjust:exact in CSS
 ═══════════════════════════════════════════════════════ */
-export async function downloadCombinedPDF(allForms, allLiveLp, project){
-  const html=buildCombinedHTMLReport(allForms,allLiveLp,project);
+export async function downloadCombinedPDF(allForms, allLiveLp, project, equipmentType){
+  const html=buildCombinedHTMLReport(allForms,allLiveLp,project,equipmentType);
   const blob=new Blob([html],{type:"text/html;charset=utf-8"});
   const url=URL.createObjectURL(blob);
   const win=window.open(url,"_blank");
@@ -735,7 +892,7 @@ export async function downloadCombinedPDF(allForms, allLiveLp, project){
 /* ═══════════════════════════════════════════════════════
    WORD DOWNLOAD — single wide table per path, matches Excel layout
 ═══════════════════════════════════════════════════════ */
-export async function downloadCombinedWord(allForms, allLiveLp, project){
+export async function downloadCombinedWord(allForms, allLiveLp, project, equipmentType){
   const { Document, Packer, Paragraph, Table, TableRow, TableCell,
           TextRun, AlignmentType, BorderStyle, WidthType, ShadingType,
           PageBreak } = await import("docx");
@@ -799,8 +956,9 @@ export async function downloadCombinedWord(allForms, allLiveLp, project){
     return mkRow([mkCell([para([run(txt,{bold,size:14})],{align:AlignmentType.LEFT})],{span:TOTAL_COLS,shade:shade2||WHT})]);
   }
 
+  const eqType=equipmentType||(allForms[Object.keys(allForms)[0]]?.equipmentType)||"DG";
   const ORDER=["exhaust","intake","through_wall","through_door","through_ceiling_above","through_ceiling_below"];
-  const active=ORDER.filter(p=>allForms[p]);
+  const active=ORDER.filter(p=>allForms[p]&&!(eqType==="Pump"&&DUCT_PATHS.includes(p)));
   const allChildren=[];
   const dateStr=new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
 
@@ -808,7 +966,11 @@ export async function downloadCombinedWord(allForms, allLiveLp, project){
     const pathNum=pi+1;
     const form=allForms[pathKey];
     const liveLp=allLiveLp[pathKey]||{};
-    const g=form.generator||{};
+    const equipType=form.equipmentType||"DG";
+    const generators=Array.isArray(form.generators)&&form.generators.length>0
+      ?form.generators:(form.generator?[form.generator]:[{}]);
+    const combinedSWL=combineEquipmentSWL(generators);
+    const g=generators[0]||{};
     const rec=form.receiver||{};
     const att=form.attenuator||{};
     const rm=form.room||{};
@@ -828,7 +990,7 @@ export async function downloadCombinedWord(allForms, allLiveLp, project){
     const reqNR=Number(rec.requiredNR)||50;
     const reqDBA=Number(rec.required_dba)||65;
 
-    const swlArr=BAND_KEYS.map(k=>Number(g.swl?.[k])||0);
+    const swlArr=BAND_KEYS.map(k=>Number(combinedSWL[k])||0);
     const Z8=BANDS.map(()=>0);
     const attILArr=BAND_KEYS.map(k=>Number(att.il?.[k])||0);
     const hasAtt=attILArr.some(v=>v>0);
@@ -867,7 +1029,7 @@ export async function downloadCombinedWord(allForms, allLiveLp, project){
     const dbaPerBandBW=lpBefore.map((v,i)=>r1(v+A_WEIGHT[i]));
     const dbaPerBandAW=lpAfter.map((v,i)=>r1(v+A_WEIGHT[i]));
     const ncCrit=getNCCriteria(reqNC);
-    const nrCrit=NR_A.map((a,i)=>a+NR_B[i]*reqNR);
+    const nrCrit=getNRCriteria(reqNR);
     const ncR=calcNCRating(lpBefore),nrR=calcNRRating(lpBefore);
     const ncRA=calcNCRating(lpAfter),nrRA=calcNRRating(lpAfter);
     const finalLabel=ncNrChoice==="NC"?`NC ${ncR}`:ncNrChoice==="NR"?`NR ${nrR}`:`${dbaB.toFixed(1)} dB(A)`;
@@ -896,7 +1058,7 @@ export async function downloadCombinedWord(allForms, allLiveLp, project){
 
     if(isDuct){
       // 1. SWL
-      tblRows.push(dataRow("GENERATOR SOUND POWER LEVEL","","","","",swlArr,GY,false,true));
+      tblRows.push(dataRow(`${equipType==="Pump"?"PUMP":"GENERATOR"} SOUND POWER LEVEL (Combined)`,"","","","",swlArr,GY,false,true));
       // 2. Ducts
       ductRows.forEach(dr=>tblRows.push(dataRow(dr.label,dr.w,dr.h,dr.l,"",dr.vals,null,dr.neg)));
       // 3. ERL
@@ -935,7 +1097,7 @@ export async function downloadCombinedWord(allForms, allLiveLp, project){
       }
     } else {
       // 1. SWL
-      tblRows.push(dataRow("GENERATOR SOUND POWER LEVEL","","","","",swlArr,GY,false,true));
+      tblRows.push(dataRow(`${equipType==="Pump"?"PUMP":"GENERATOR"} SOUND POWER LEVEL (Combined)`,"","","","",swlArr,GY,false,true));
       // 2. Distance/Room Correction
       if(distArr.some(v=>v!==0)) tblRows.push(dataRow(distLabel,"","","","",distArr));
       // 3. TL (STC in own cell)
@@ -1012,7 +1174,7 @@ export async function downloadCombinedWord(allForms, allLiveLp, project){
           mkCell(finalLabelA,{shade:GRN,bold:true,color:"276221",size:14}),
         ]),
         ...(showAWeight?[
-          dataRowW("Lp + A-Weighting per Band (with attenuator)  [Lp(i) + A(i)]","","","","",dbaPerBandAW,LGY),
+          dataRow("Lp + A-Weighting per Band (with attenuator)  [Lp(i) + A(i)]","","","","",dbaPerBandAW,LGY),
           mkRow([
             mkCell([para([run("Total dB(A) WITH Attenuator — Logarithmic Addition  [10·log₁₀(Σ 10^((Lp+A)/10))]",{bold:true,size:14})],{align:AlignmentType.LEFT})],{shade:GRN,span:5}),
             ...Array(N_BANDS-1).fill(null).map(()=>mkCell("",{shade:GRN})),
@@ -1050,12 +1212,13 @@ export async function downloadCombinedWord(allForms, allLiveLp, project){
 /* ═══════════════════════════════════════════════════════
    DOWNLOAD MODAL
 ═══════════════════════════════════════════════════════ */
-export function DownloadModal({ onClose, allForms, allLiveLp, project }){
+export function DownloadModal({ onClose, allForms, allLiveLp, project, equipmentType }){
   const [loading, setLoading] = useState(null);
   const [prevPath, setPrevPath] = useState(null);
 
+  const eqType=equipmentType||(allForms[Object.keys(allForms)[0]]?.equipmentType)||"DG";
   const ORDER=["exhaust","intake","through_wall","through_door","through_ceiling_above","through_ceiling_below"];
-  const active=ORDER.filter(p=>allForms[p]);
+  const active=ORDER.filter(p=>allForms[p]&&!(eqType==="Pump"&&DUCT_PATHS.includes(p)));
 
   const previewHtml=useMemo(()=>{
     if(prevPath&&allForms[prevPath]){
@@ -1064,14 +1227,14 @@ export function DownloadModal({ onClose, allForms, allLiveLp, project }){
         ${buildSinglePathHTML(allForms[prevPath],allLiveLp[prevPath]||{},project,idx+1)}
       </body></html>`;
     }
-    return buildCombinedHTMLReport(allForms,allLiveLp,project);
-  },[allForms,allLiveLp,project,prevPath]);
+    return buildCombinedHTMLReport(allForms,allLiveLp,project,eqType);
+  },[allForms,allLiveLp,project,prevPath,eqType]);
 
   const handle=async(type)=>{
     setLoading(type);
     try{
-      if(type==="pdf") await downloadCombinedPDF(allForms,allLiveLp,project);
-      else             await downloadCombinedWord(allForms,allLiveLp,project);
+      if(type==="pdf") await downloadCombinedPDF(allForms,allLiveLp,project,eqType);
+      else             await downloadCombinedWord(allForms,allLiveLp,project,eqType);
       toast.success(type==="pdf"?"Print dialog opened — save as PDF":"Word file downloaded");
     }catch(e){ console.error(e); toast.error("Download failed: "+e.message); }
     finally{ setLoading(null); }

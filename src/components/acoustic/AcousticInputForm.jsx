@@ -3635,6 +3635,7 @@ export default function AcousticInputForm({ projectId, existing, onSaved, onResu
           allForms={Object.fromEntries(Object.entries(forms).map(([k,f])=>([k,{...f,equipmentType}])))}
           allLiveLp={allLiveLp}
           project={project}
+          equipmentType={equipmentType}
         />
       )}
     </div>
