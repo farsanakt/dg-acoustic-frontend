@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, FolderPlus, Loader2, Plus, Trash2,
   Building2, MapPin, Hash, FileText, Wrench,
-  Tag, Users, HardHat, Calendar, ChevronRight,
+  Tag, Users, HardHat, Calendar, ChevronRight, Layers,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { createProjectApi, updateProjectApi } from "@/api/projectApi";
@@ -227,6 +227,18 @@ function EquipmentRow({ item, index, onChange, onRemove, canRemove }) {
   );
 }
 
+/* ─── Module data ────────────────────────────────────────── */
+const MODULES = [
+  { value: "module_1", label: "Module 1", desc: "DG / Pump",   color: "#0E9F8E", bg: "#E3F8F5" },
+  { value: "module_2", label: "Module 2", desc: "FCU / Fan",   color: "#6366F1", bg: "#EEF2FF" },
+  { value: "module_3", label: "Module 3", desc: "Coming soon", color: "#F59E0B", bg: "#FFFBEB", disabled: true },
+  { value: "module_4", label: "Module 4", desc: "Coming soon", color: "#94A3B8", bg: "#F8FAFC", disabled: true },
+];
+const MODULE2_SUBTYPES = [
+  { value: "fcu", label: "FCU (Fan Coil Unit)" },
+  { value: "fan", label: "Fan" },
+];
+
 /* ─── Default form values ────────────────────────────────── */
 const INIT = {
   jobNumber: "", name: "", projectType: "commercial",
@@ -234,29 +246,33 @@ const INIT = {
   reportNumber: "", revision: "R00", reportDate: "",
   siteLocation: "", equipment: [{ type: "", tag: "" }],
   description: "", status: "draft",
+  module: "module_1", module2SubType: "",
 };
 
 const fromProject = (p) => ({
-  jobNumber:     p.jobNumber     || "",
-  name:          p.name          || "",
-  projectType:   p.projectType   || "commercial",
-  clientName:    p.clientName    || "",
-  mainContractor:p.mainContractor|| "",
-  mepContractor: p.mepContractor || "",
-  reportNumber:  p.reportNumber  || "",
-  revision:      p.revision      || "R00",
-  reportDate:    p.reportDate    || "",
-  siteLocation:  p.siteLocation  || "",
-  equipment:     p.equipment?.length ? p.equipment.map(e => ({ type: e.type||"", tag: e.tag||"" }))
-                                     : [{ type: "", tag: "" }],
-  description:   p.description   || "",
-  status:        p.status        || "draft",
+  jobNumber:      p.jobNumber      || "",
+  name:           p.name           || "",
+  projectType:    p.projectType    || "commercial",
+  clientName:     p.clientName     || "",
+  mainContractor: p.mainContractor || "",
+  mepContractor:  p.mepContractor  || "",
+  reportNumber:   p.reportNumber   || "",
+  revision:       p.revision       || "R00",
+  reportDate:     p.reportDate     || "",
+  siteLocation:   p.siteLocation   || "",
+  equipment:      p.equipment?.length
+    ? p.equipment.map(e => ({ type: e.type||"", tag: e.tag||"" }))
+    : [{ type: "", tag: "" }],
+  description:    p.description    || "",
+  status:         p.status         || "draft",
+  module:         p.module         || "module_1",
+  module2SubType: p.module2SubType || "",
 });
 
 /* ═══════════════════════════════════════════════════════════ */
 export default function ProjectModal({ open, onClose, onSaved, project }) {
   const editing = !!project;
-  const [tab,    setTab]    = useState("project");   // "project" | "report" | "equipment"
+  const [tab,    setTab]    = useState("project"); // "project" | "report" | "equipment" | "module"
   const [form,   setForm]   = useState(INIT);
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -296,9 +312,14 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
     const e = {};
     if (!form.name.trim())       e.name       = "Project name is required";
     if (!form.clientName.trim()) e.clientName = "Client name is required";
+    if (!form.module)            e.module     = "Please select a module";
+    if (form.module === "module_2" && !form.module2SubType)
+      e.module2SubType = "Please select FCU or Fan";
     setErrors(e);
     if (Object.keys(e).length) {
-      setTab("project"); // jump back to show errors
+      // jump to the tab that has the first error
+      if (e.name || e.clientName) setTab("project");
+      else if (e.module || e.module2SubType) setTab("module");
     }
     return !Object.keys(e).length;
   };
@@ -309,8 +330,8 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
     setSaving(true);
     try {
       const payload = { ...form };
-      // remove empty equipment rows
       payload.equipment = payload.equipment.filter(e => e.type.trim() || e.tag.trim());
+      payload.module2SubType = form.module === "module_2" ? form.module2SubType : "";
       if (editing) {
         await updateProjectApi(project._id, payload);
         toast.success("Project updated");
@@ -326,6 +347,9 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
       setSaving(false);
     }
   };
+
+  /* Active module meta for accent colour */
+  const activeMod = MODULES.find(m => m.value === form.module) || MODULES[0];
 
   if (!open) return null;
 
@@ -367,10 +391,7 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
               }}
             >
               {/* ── Header ── */}
-              <div style={{
-                padding: "18px 22px 0",
-                flexShrink: 0,
-              }}>
+              <div style={{ padding: "18px 22px 0", flexShrink: 0 }}>
                 <div style={{
                   display: "flex", alignItems: "center",
                   justifyContent: "space-between", marginBottom: 14,
@@ -378,10 +399,11 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
                     <div style={{
                       width: 36, height: 36, borderRadius: 10,
-                      background: "#E3F8F5",
+                      background: activeMod.bg,
                       display: "flex", alignItems: "center", justifyContent: "center",
+                      transition: "background .2s",
                     }}>
-                      <FolderPlus size={18} color="#0E9F8E" />
+                      <FolderPlus size={18} color={activeMod.color} />
                     </div>
                     <div>
                       <h3 style={{
@@ -406,10 +428,8 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
                   </button>
                 </div>
 
-                {/* ── Tab bar ── */}
-                <div style={{
-                  display: "flex", borderBottom: "1px solid #E2E8F0", gap: 2,
-                }}>
+                {/* ── Tab bar — now 4 tabs ── */}
+                <div style={{ display: "flex", borderBottom: "1px solid #E2E8F0", gap: 2 }}>
                   <Tab active={tab==="project"}   onClick={() => setTab("project")}
                     icon={FileText}  label="Project Info" />
                   <Tab active={tab==="report"}    onClick={() => setTab("report")}
@@ -417,6 +437,8 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
                   <Tab active={tab==="equipment"} onClick={() => setTab("equipment")}
                     icon={Wrench}    label="Equipment"
                     count={form.equipment.filter(e=>e.type||e.tag).length || null} />
+                  <Tab active={tab==="module"}    onClick={() => setTab("module")}
+                    icon={Layers}    label="Module" />
                 </div>
               </div>
 
@@ -432,7 +454,6 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
                   <>
                     <Section icon={FileText} title="Project Identification" />
 
-                    {/* Job No + Project Name */}
                     <div style={{ display:"grid", gridTemplateColumns:"160px 1fr", gap:12 }}>
                       <Field label="Job Number" icon={Hash}
                         placeholder="e.g. JOB-2026-001"
@@ -442,7 +463,6 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
                         value={form.name} onChange={set("name")} error={errors.name} />
                     </div>
 
-                    {/* Project Type + Site Location */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                       <Select label="Project Type" required
                         value={form.projectType} onChange={set("projectType")}>
@@ -462,13 +482,11 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
 
                     <Section icon={Users} title="Project Parties" color="#3B82F6" />
 
-                    {/* Client */}
                     <Field label="Client Name" icon={Building2} required
                       placeholder="e.g. ABC Hotel Group"
                       value={form.clientName} onChange={set("clientName")}
                       error={errors.clientName} />
 
-                    {/* Main + MEP contractor */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                       <Field label="Main Contractor" icon={HardHat}
                         placeholder="e.g. XYZ Construction"
@@ -515,7 +533,6 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
                   <>
                     <Section icon={Hash} title="Calculation / Report Reference" />
 
-                    {/* Report No + Revision */}
                     <div style={{ display:"grid", gridTemplateColumns:"1fr 120px", gap:12 }}>
                       <Field label="Calculation / Report Number" icon={Hash}
                         placeholder="e.g. AAPL-SR-DG-080726"
@@ -525,12 +542,10 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
                         value={form.revision} onChange={set("revision")} />
                     </div>
 
-                    {/* Date */}
                     <Field label="Report Date" icon={Calendar}
                       type="date"
                       value={form.reportDate} onChange={set("reportDate")} />
 
-                    {/* Tip box */}
                     <div style={{
                       background: "#F0F9FF", border: "1px solid #BAE6FD",
                       borderRadius: 8, padding: "12px 14px",
@@ -597,6 +612,141 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
                     )}
                   </>
                 )}
+
+                {/* ══ TAB 4: Module ══ */}
+                {tab === "module" && (
+                  <>
+                    <Section icon={Layers} title="Select Module" color="#6366F1" />
+
+                    <p style={{ fontSize: 12.5, color: "#64748B",
+                      fontFamily: "Inter, sans-serif", lineHeight: 1.6, margin: 0 }}>
+                      Choose the calculation module for this project.
+                      Modules 3 and 4 will be available soon.
+                    </p>
+
+                    {/* Module cards */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      {MODULES.map(m => (
+                        <button
+                          key={m.value}
+                          type="button"
+                          disabled={m.disabled}
+                          onClick={() => !m.disabled && setVal("module", m.value)}
+                          style={{
+                            padding: "14px 16px", borderRadius: 12, textAlign: "left",
+                            border: `2px solid ${form.module === m.value ? m.color : "#E2E8F0"}`,
+                            background: form.module === m.value ? m.bg : "#fff",
+                            cursor: m.disabled ? "not-allowed" : "pointer",
+                            opacity: m.disabled ? 0.45 : 1,
+                            transition: "all .18s",
+                            display: "flex", alignItems: "center", gap: 12,
+                          }}
+                        >
+                          <div style={{
+                            width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                            background: form.module === m.value ? `${m.color}22` : "#F1F5F9",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            transition: "background .18s",
+                          }}>
+                            <Layers size={16} color={form.module === m.value ? m.color : "#94A3B8"} />
+                          </div>
+                          <div>
+                            <div style={{
+                              fontSize: 13, fontWeight: 700,
+                              color: form.module === m.value ? m.color : "#0F172A",
+                              fontFamily: "Plus Jakarta Sans, sans-serif",
+                              transition: "color .18s",
+                            }}>
+                              {m.label}
+                            </div>
+                            <div style={{ fontSize: 11.5, color: "#94A3B8", marginTop: 2 }}>
+                              {m.desc}
+                            </div>
+                          </div>
+                          {form.module === m.value && (
+                            <div style={{
+                              marginLeft: "auto", width: 18, height: 18,
+                              borderRadius: "50%", background: m.color, flexShrink: 0,
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                            }}>
+                              <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                                <path d="M1 4L3.5 6.5L9 1" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            </div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+
+                    {errors.module && (
+                      <p style={S.error}>{errors.module}</p>
+                    )}
+
+                    {/* Module 2 sub-type picker */}
+                    <AnimatePresence>
+                      {form.module === "module_2" && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          style={{ overflow: "hidden" }}
+                        >
+                          <div style={{
+                            padding: "14px 16px", borderRadius: 12,
+                            background: "#F5F3FF", border: "1.5px solid #C4B5FD",
+                            marginTop: 4,
+                          }}>
+                            <label style={{ ...S.label, color: "#6366F1", marginBottom: 10 }}>
+                              Module 2 — Equipment Type
+                              <span style={{ color: "#EF4444" }}> *</span>
+                            </label>
+                            <div style={{ display: "flex", gap: 10 }}>
+                              {MODULE2_SUBTYPES.map(st => (
+                                <button
+                                  key={st.value}
+                                  type="button"
+                                  onClick={() => setVal("module2SubType", st.value)}
+                                  style={{
+                                    flex: 1, padding: "10px 14px", borderRadius: 9,
+                                    border: `2px solid ${form.module2SubType === st.value ? "#6366F1" : "#DDD6FE"}`,
+                                    background: form.module2SubType === st.value ? "#6366F1" : "#fff",
+                                    color: form.module2SubType === st.value ? "#fff" : "#6366F1",
+                                    fontSize: 13.5, fontWeight: 700,
+                                    cursor: "pointer", transition: "all .18s",
+                                    fontFamily: "Inter, sans-serif",
+                                  }}
+                                >
+                                  {st.label}
+                                </button>
+                              ))}
+                            </div>
+                            {errors.module2SubType && (
+                              <p style={{ ...S.error, marginTop: 8 }}>{errors.module2SubType}</p>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {/* Info box showing selected module */}
+                    {form.module && (
+                      <div style={{
+                        display: "flex", gap: 10, alignItems: "center",
+                        padding: "12px 14px", borderRadius: 10,
+                        background: activeMod.bg,
+                        border: `1px solid ${activeMod.color}33`,
+                      }}>
+                        <Layers size={15} color={activeMod.color} />
+                        <p style={{ fontSize: 12.5, color: activeMod.color,
+                          fontFamily: "Inter, sans-serif", lineHeight: 1.5, margin: 0, fontWeight: 600 }}>
+                          {activeMod.label} — {activeMod.desc}
+                          {form.module === "module_2" && form.module2SubType &&
+                            ` · ${form.module2SubType === "fcu" ? "FCU (Fan Coil Unit)" : "Fan"}`}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
 
               {/* ── Footer ── */}
@@ -607,12 +757,12 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
                 justifyContent: "space-between",
                 flexShrink: 0, background: "#fff",
               }}>
-                {/* Tab navigation hints */}
+                {/* Tab progress dots — now 4 */}
                 <div style={{ display: "flex", gap: 6 }}>
-                  {["project","report","equipment"].map((t, i) => (
+                  {["project","report","equipment","module"].map((t) => (
                     <div key={t} onClick={() => setTab(t)} style={{
                       width: 28, height: 4, borderRadius: 99, cursor: "pointer",
-                      background: tab === t ? "#0E9F8E" : "#E2E8F0",
+                      background: tab === t ? activeMod.color : "#E2E8F0",
                       transition: "background .2s",
                     }} />
                   ))}
@@ -634,12 +784,13 @@ export default function ProjectModal({ open, onClose, onSaved, project }) {
                     style={{
                       padding: "9px 26px", borderRadius: 8, border: "none",
                       background: saving ? "#CBD5E1"
-                        : "linear-gradient(135deg, #0E9F8E, #0B8276)",
+                        : `linear-gradient(135deg, ${activeMod.color}, ${activeMod.color}cc)`,
                       color: "#fff", fontSize: 13.5, fontWeight: 700,
                       fontFamily: "Plus Jakarta Sans, sans-serif",
-                      boxShadow: saving ? "none" : "0 4px 14px rgba(14,159,142,.3)",
+                      boxShadow: saving ? "none" : `0 4px 14px ${activeMod.color}44`,
                       display: "flex", alignItems: "center", gap: 8,
                       cursor: saving ? "not-allowed" : "pointer",
+                      transition: "background .2s, box-shadow .2s",
                     }}>
                     {saving && <Loader2 size={14} style={{ animation: "spin .7s linear infinite" }} />}
                     {saving ? "Saving…" : editing ? "Save Changes" : "Create Project"}

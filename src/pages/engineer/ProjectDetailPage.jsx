@@ -5,9 +5,10 @@ import {
   ArrowLeft, Edit2, GitBranch, Info,
   Clock, CheckCircle2, AlertCircle,
   RefreshCw, Trash2, GitCommit, Loader2,
-  ChevronDown,
+  ChevronDown, Layers, Wind, Thermometer,
 } from "lucide-react";
 import toast from "react-hot-toast";
+import FCUInputForm from "../../components/acoustic/FCUInputForm";
 
 import Sidebar              from "../../components/Sidebar";
 import ProjectInfoPanel     from "../../components/ProjectInfoPanel";
@@ -31,6 +32,14 @@ const STATUSES = [
   { value:"approved",         label:"Approved",         color:"#22C55E" },
   { value:"completed",        label:"Completed",        color:"#0E9F8E" },
 ];
+
+/* ── Module meta ── */
+const MODULE_META = {
+  module_1: { label:"Module 1 — DG / Pump", color:"#0E9F8E", bg:"#E3F8F5" },
+  module_2: { label:"Module 2 — FCU / Fan",  color:"#6366F1", bg:"#EEF2FF" },
+  module_3: { label:"Module 3",              color:"#F59E0B", bg:"#FFFBEB" },
+  module_4: { label:"Module 4",              color:"#94A3B8", bg:"#F8FAFC" },
+};
 
 /* ── Tab button ── */
 function Tab({ active, onClick, icon: Icon, label }) {
@@ -137,6 +146,120 @@ function StatusDropdown({ current, onChange, loading }) {
   );
 }
 
+/* ── Module 1 Calculation tab (DG / Pump) ── */
+function Module1CalcTab({ id, existingCalc, setExistingCalc, isMobile }) {
+  const [calcResults,  setCalcResults]  = useState(null);
+  const [calcReceiver, setCalcReceiver] = useState(null);
+
+  useEffect(() => {
+    if (!id) return;
+    getCalculationsApi(id).then(({ data }) => {
+      if (data.calculations?.length > 0) {
+        setExistingCalc(data.calculations[0]);
+        setCalcResults(data.calculations[0].results);
+        setCalcReceiver(data.calculations[0].receiver);
+      }
+    }).catch(() => {});
+  }, [id]);
+
+  return (
+    <div style={{
+      display:"grid",
+      gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+      gap: isMobile ? 20 : 24,
+      alignItems:"start",
+    }}>
+      <div>
+        <h2 style={{ fontFamily:"Plus Jakarta Sans,sans-serif",
+          fontWeight:800, fontSize:16, color:"#0F172A",
+          margin:"0 0 4px" }}>Acoustic Inputs</h2>
+        <p style={{ fontSize:12.5, color:"#94A3B8",
+          fontFamily:"Inter,sans-serif", margin:"0 0 20px" }}>
+          DG / Pump — enter calculation data and click Save & Calculate
+        </p>
+        <AcousticInputForm
+          projectId={id}
+          existing={existingCalc}
+          onSaved={(c) => setExistingCalc(c)}
+          onResults={(r, rec) => { setCalcResults(r); if(rec) setCalcReceiver(rec); }}
+        />
+      </div>
+      <div>
+        <h2 style={{ fontFamily:"Plus Jakarta Sans,sans-serif",
+          fontWeight:800, fontSize:16, color:"#0F172A",
+          margin:"0 0 4px" }}>Results</h2>
+        <p style={{ fontSize:12.5, color:"#94A3B8",
+          fontFamily:"Inter,sans-serif", margin:"0 0 20px" }}>
+          {calcResults ? "Calculation results" : "Run a calculation to see results here"}
+        </p>
+        <AcousticResults
+          results={calcResults}
+          receiver={calcReceiver || existingCalc?.receiver}
+        />
+        {!calcResults && (
+          <div style={{ textAlign:"center", padding:"48px 24px",
+            background:"#F8FAFC", borderRadius:14,
+            border:"1.5px dashed #E2E8F0" }}>
+            <p style={{ color:"#94A3B8", fontSize:14,
+              fontFamily:"Inter,sans-serif" }}>
+              Fill in the inputs on the left and click<br />
+              <strong style={{ color:"#0E9F8E" }}>Run Calculation</strong> to see results
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Module 2 Calculation tab (FCU / Fan) ── */
+
+
+function Module2CalcTab({ project }) {
+  return (
+    <div style={{ padding:"24px 0" }}>
+      <FCUInputForm project={project} />
+    </div>
+  );
+}
+
+/* ── Generic "coming soon" for modules 3 & 4 ── */
+function ModuleComingSoon({ moduleNum }) {
+  return (
+    <div style={{
+      display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center",
+      padding:"64px 32px", textAlign:"center",
+      background:"#fff", borderRadius:16,
+      border:"1.5px dashed #E2E8F0",
+      minHeight:320,
+    }}>
+      <div style={{ width:64, height:64, borderRadius:16,
+        background:"#F1F5F9",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        marginBottom:20 }}>
+        <Layers size={30} color="#94A3B8" />
+      </div>
+      <h3 style={{ fontFamily:"Plus Jakarta Sans,sans-serif",
+        fontWeight:800, fontSize:18, color:"#0F172A",
+        margin:"0 0 10px" }}>
+        Module {moduleNum}
+      </h3>
+      <p style={{ color:"#64748B", fontSize:14, maxWidth:340,
+        fontFamily:"Inter,sans-serif", lineHeight:1.6, margin:"0 0 20px" }}>
+        This module's calculation form will be added soon.
+      </p>
+      <div style={{ display:"inline-flex", alignItems:"center", gap:8,
+        padding:"9px 18px", borderRadius:9999,
+        background:"#F8FAFC", border:"1.5px solid #E2E8F0",
+        fontSize:13, fontWeight:600, color:"#94A3B8" }}>
+        <Layers size={14} />
+        Coming Soon
+      </div>
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════ */
 export default function ProjectDetailPage() {
   const { id } = useParams();
@@ -153,8 +276,6 @@ export default function ProjectDetailPage() {
   const [versionModal,    setVersionModal]    = useState(false);
   const [editModal,       setEditModal]       = useState(false);
   const [deleteModal,     setDeleteModal]     = useState(false);
-  const [calcResults,     setCalcResults]     = useState(null);
-  const [calcReceiver,    setCalcReceiver]    = useState(null);
   const [existingCalc,    setExistingCalc]    = useState(null);
 
   const sidebarW = isMobile ? 0 : (collapsed ? 68 : 232);
@@ -175,18 +296,6 @@ export default function ProjectDetailPage() {
 
   useEffect(() => { fetchProject(); }, [fetchProject]);
 
-  /* Fetch existing calculations */
-  useEffect(() => {
-    if (!id) return;
-    getCalculationsApi(id).then(({ data }) => {
-      if (data.calculations?.length > 0) {
-        setExistingCalc(data.calculations[0]);
-        setCalcResults(data.calculations[0].results);
-        setCalcReceiver(data.calculations[0].receiver);
-      }
-    }).catch(() => {});
-  }, [id]);
-
   /* Status change */
   const handleStatusChange = async (newStatus) => {
     setStatusUpdating(true);
@@ -201,13 +310,54 @@ export default function ProjectDetailPage() {
     }
   };
 
-  /* Helpers */
   const fmtDate = (d) => d
     ? new Date(d).toLocaleDateString("en-GB",
         { day:"2-digit", month:"short", year:"numeric" })
     : "—";
 
-  /* ── Render ── */
+  const moduleMeta = project ? (MODULE_META[project.module] || MODULE_META.module_1) : MODULE_META.module_1;
+
+  /* ── Calc tab label based on module ── */
+  const calcTabLabel = () => {
+    if (!project) return "Calculation";
+    switch(project.module) {
+      case "module_1": return "DG / Pump Calculation";
+      case "module_2": {
+        const st = project.module2SubType;
+        return st === "fcu" ? "FCU Calculation" : st === "fan" ? "Fan Calculation" : "Module 2 Calculation";
+      }
+      default: return `Module ${project.module?.split("_")[1] || ""} Calculation`;
+    }
+  };
+
+  /* ── Render calc content based on module ── */
+  const renderCalcContent = () => {
+    if (!project) return null;
+    switch(project.module) {
+      case "module_1":
+        return <Module1CalcTab
+          id={id}
+          existingCalc={existingCalc}
+          setExistingCalc={setExistingCalc}
+          isMobile={isMobile}
+        />;
+      case "module_2":
+        return <Module2CalcTab project={project} />;
+      case "module_3":
+        return <ModuleComingSoon moduleNum={3} />;
+      case "module_4":
+        return <ModuleComingSoon moduleNum={4} />;
+      default:
+        return <Module1CalcTab
+          id={id}
+          existingCalc={existingCalc}
+          setExistingCalc={setExistingCalc}
+          isMobile={isMobile}
+        />;
+    }
+  };
+
+  /* ── Loading ── */
   if (loading) return (
     <div style={{ display:"flex", minHeight:"100vh", background:"#F8FAFC" }}>
       <Sidebar collapsed={collapsed} setCollapsed={setCollapsed}
@@ -221,16 +371,17 @@ export default function ProjectDetailPage() {
           Loading project…
         </p>
         <style>{`
-        @keyframes spin{to{transform:rotate(360deg)}}
-        .dg-sidebar-desktop{ display:flex !important; flex-direction:column; }
-        @media(max-width:768px){
-          .dg-sidebar-desktop{ display:none !important; }
-        }
-      `}</style>
+          @keyframes spin{to{transform:rotate(360deg)}}
+          .dg-sidebar-desktop{ display:flex !important; flex-direction:column; }
+          @media(max-width:768px){
+            .dg-sidebar-desktop{ display:none !important; }
+          }
+        `}</style>
       </div>
     </div>
   );
 
+  /* ── Error ── */
   if (error || !project) return (
     <div style={{ display:"flex", minHeight:"100vh", background:"#F8FAFC" }}>
       <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
@@ -272,7 +423,7 @@ export default function ProjectDetailPage() {
             flexWrap:"wrap", gap:10,
           }}>
             {/* Left: back + title */}
-            <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:14, minWidth:0 }}>
               <button onClick={() => navigate("/engineer")}
                 style={{
                   display:"flex", alignItems:"center", gap:6,
@@ -280,7 +431,7 @@ export default function ProjectDetailPage() {
                   border:"1.5px solid #E2E8F0", background:"#fff",
                   color:"#64748B", fontSize:13, fontWeight:500,
                   cursor:"pointer", transition:"all .18s",
-                  fontFamily:"Inter,sans-serif",
+                  fontFamily:"Inter,sans-serif", flexShrink:0,
                 }}
                 onMouseEnter={e => { e.currentTarget.style.borderColor="#0E9F8E"; e.currentTarget.style.color="#0E9F8E"; }}
                 onMouseLeave={e => { e.currentTarget.style.borderColor="#E2E8F0"; e.currentTarget.style.color="#64748B"; }}
@@ -288,10 +439,10 @@ export default function ProjectDetailPage() {
                 <ArrowLeft size={14} /> Dashboard
               </button>
 
-              <div style={{ width:1, height:24, background:"#E2E8F0" }} />
+              <div style={{ width:1, height:24, background:"#E2E8F0", flexShrink:0 }} />
 
-              <div>
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ minWidth:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
                   {project.jobNumber && (
                     <span style={{ fontSize:11.5, fontWeight:700, color:"#0E9F8E",
                       fontFamily:"Inter,sans-serif", letterSpacing:".04em" }}>
@@ -303,6 +454,17 @@ export default function ProjectDetailPage() {
                     fontWeight:800, fontSize:18, color:"#0F172A", margin:0 }}>
                     {project.name}
                   </h1>
+                  {/* Module badge */}
+                  <span style={{
+                    padding:"3px 10px", borderRadius:9999,
+                    background: moduleMeta.bg, color: moduleMeta.color,
+                    fontSize:11, fontWeight:700,
+                    fontFamily:"Inter,sans-serif",
+                    border:`1px solid ${moduleMeta.color}22`,
+                    flexShrink:0,
+                  }}>
+                    {moduleMeta.label}
+                  </span>
                 </div>
                 <p style={{ fontSize:12, color:"#94A3B8",
                   fontFamily:"Inter,sans-serif", margin:"2px 0 0" }}>
@@ -314,15 +476,13 @@ export default function ProjectDetailPage() {
             </div>
 
             {/* Right: action buttons */}
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              {/* Status dropdown */}
+            <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
               <StatusDropdown
                 current={project.status}
                 onChange={handleStatusChange}
                 loading={statusUpdating}
               />
 
-              {/* Save version */}
               <motion.button
                 onClick={() => setVersionModal(true)}
                 whileHover={{ scale:1.03, y:-1 }}
@@ -341,7 +501,6 @@ export default function ProjectDetailPage() {
                 Save Version
               </motion.button>
 
-              {/* Edit */}
               <button onClick={() => setEditModal(true)}
                 style={{
                   width:36, height:36, borderRadius:9,
@@ -354,7 +513,6 @@ export default function ProjectDetailPage() {
                 <Edit2 size={15} />
               </button>
 
-              {/* Delete */}
               <button onClick={() => setDeleteModal(true)}
                 style={{
                   width:36, height:36, borderRadius:9,
@@ -367,7 +525,6 @@ export default function ProjectDetailPage() {
                 <Trash2 size={15} />
               </button>
 
-              {/* Refresh */}
               <button onClick={fetchProject}
                 style={{
                   width:36, height:36, borderRadius:9,
@@ -382,42 +539,58 @@ export default function ProjectDetailPage() {
 
           {/* Tab bar */}
           <div style={{ display:"flex", padding:"0 32px",
-            borderTop:"none", gap:4, marginTop:4 }}>
+            borderTop:"none", gap:4, marginTop:4, overflowX:"auto" }}>
             <Tab active={tab==="info"}     onClick={() => setTab("info")}
               icon={Info}       label="Project Info" />
             <Tab active={tab==="versions"} onClick={() => setTab("versions")}
               icon={GitBranch}  label={`Version History (${project.versions?.length || 0})`} />
-            <Tab active={tab==="acoustic"} onClick={() => setTab("acoustic")}
-              icon={CheckCircle2}  label="Acoustic Calculation" />
+            <Tab active={tab==="calc"}     onClick={() => setTab("calc")}
+              icon={CheckCircle2} label={calcTabLabel()} />
           </div>
         </div>
 
         {/* ── Main content ── */}
-        <main style={{ padding:"32px", maxWidth:1100, margin:"0 auto" }}>
+        <main style={{ padding: isMobile ? "24px 12px" : "32px", maxWidth:1100, margin:"0 auto" }}>
           <AnimatePresence mode="wait">
+
+            {/* Project Info */}
             {tab === "info" && (
               <motion.div key="info"
                 initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}
                 exit={{ opacity:0 }} transition={{ duration:.22 }}
               >
                 <div style={{
-                    display:"grid",
-                    gridTemplateColumns: isMobile ? "1fr" : "1fr 340px",
-                    gap: isMobile ? 20 : 24,
-                    alignItems:"start",
-                  }}>
-                  {/* Left: Project info card */}
+                  display:"grid",
+                  gridTemplateColumns: isMobile ? "1fr" : "1fr 340px",
+                  gap: isMobile ? 20 : 24,
+                  alignItems:"start",
+                }}>
+                  {/* Left: Project info */}
                   <div style={{
                     background:"#fff", borderRadius:16,
                     border:"1px solid #E2E8F0",
-                    padding:"28px 28px",
+                    padding:"28px",
                     boxShadow:"0 1px 4px rgba(0,0,0,.05)",
                   }}>
-                    <h2 style={{ fontFamily:"Plus Jakarta Sans,sans-serif",
-                      fontWeight:800, fontSize:16, color:"#0F172A",
-                      margin:"0 0 4px" }}>
-                      Project Details
-                    </h2>
+                    <div style={{ display:"flex", alignItems:"center",
+                      justifyContent:"space-between", marginBottom:4 }}>
+                      <h2 style={{ fontFamily:"Plus Jakarta Sans,sans-serif",
+                        fontWeight:800, fontSize:16, color:"#0F172A", margin:0 }}>
+                        Project Details
+                      </h2>
+                      {/* Module badge in info card */}
+                      <span style={{
+                        padding:"4px 12px", borderRadius:9999,
+                        background: moduleMeta.bg, color: moduleMeta.color,
+                        fontSize:11.5, fontWeight:700,
+                        fontFamily:"Inter,sans-serif",
+                        border:`1px solid ${moduleMeta.color}33`,
+                      }}>
+                        {moduleMeta.label}
+                        {project.module === "module_2" && project.module2SubType &&
+                          ` · ${project.module2SubType === "fcu" ? "FCU" : "Fan"}`}
+                      </span>
+                    </div>
                     <p style={{ fontSize:12.5, color:"#94A3B8",
                       fontFamily:"Inter,sans-serif", margin:"0 0 20px" }}>
                       Full project information
@@ -430,7 +603,7 @@ export default function ProjectDetailPage() {
                     {/* Version snapshot */}
                     <div style={{
                       background:"linear-gradient(135deg,#0D2137,#1A3352)",
-                      borderRadius:16, padding:"22px 22px",
+                      borderRadius:16, padding:"22px",
                       boxShadow:"0 4px 20px rgba(13,33,55,.2)",
                     }}>
                       <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
@@ -451,8 +624,7 @@ export default function ProjectDetailPage() {
                           </p>
                         </div>
                       </div>
-                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr",
-                        gap:10 }}>
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                         {[
                           { label:"Total Versions", value: project.versions?.length || 1 },
                           { label:"Equipment Items", value: (project.equipment||[]).filter(e=>e.type||e.tag).length },
@@ -473,8 +645,7 @@ export default function ProjectDetailPage() {
                       <button
                         onClick={() => setVersionModal(true)}
                         style={{
-                          width:"100%", marginTop:14,
-                          padding:"10px",
+                          width:"100%", marginTop:14, padding:"10px",
                           background:"rgba(14,159,142,.2)",
                           border:"1px solid rgba(14,159,142,.4)",
                           borderRadius:10, color:"#2EC4B6",
@@ -493,7 +664,7 @@ export default function ProjectDetailPage() {
 
                     {/* Timeline */}
                     <div style={{ background:"#fff", borderRadius:16,
-                      border:"1px solid #E2E8F0", padding:"20px 20px",
+                      border:"1px solid #E2E8F0", padding:"20px",
                       boxShadow:"0 1px 4px rgba(0,0,0,.05)" }}>
                       <p style={{ fontSize:12, fontWeight:700, color:"#94A3B8",
                         textTransform:"uppercase", letterSpacing:".06em",
@@ -501,10 +672,9 @@ export default function ProjectDetailPage() {
                         Timeline
                       </p>
                       {[
-                        { label:"Created", value: fmtDate(project.createdAt), color:"#0E9F8E" },
+                        { label:"Created",      value: fmtDate(project.createdAt), color:"#0E9F8E" },
                         { label:"Last Updated", value: fmtDate(project.updatedAt), color:"#3B82F6" },
-                        { label:"Report Date", value: project.reportDate
-                            ? fmtDate(project.reportDate) : "Not set", color:"#8B5CF6" },
+                        { label:"Report Date",  value: project.reportDate ? fmtDate(project.reportDate) : "Not set", color:"#8B5CF6" },
                       ].map(t => (
                         <div key={t.label} style={{ display:"flex", justifyContent:"space-between",
                           alignItems:"center", padding:"8px 0",
@@ -518,80 +688,12 @@ export default function ProjectDetailPage() {
                         </div>
                       ))}
                     </div>
-
-                    {/* Next step hint */}
-                    <div style={{ background:"#FFF7ED", border:"1px solid #FED7AA",
-                      borderRadius:14, padding:"16px 18px" }}>
-                      <p style={{ fontSize:12, fontWeight:700, color:"#C2410C",
-                        fontFamily:"Inter,sans-serif", margin:"0 0 6px",
-                        textTransform:"uppercase", letterSpacing:".05em" }}>
-                        Next Step
-                      </p>
-                      <p style={{ fontSize:13, color:"#92400E",
-                        fontFamily:"Inter,sans-serif", lineHeight:1.6, margin:0 }}>
-                        Acoustic input forms and calculation engine coming in Step 5.
-                        You will be able to enter octave-band data and run assessments here.
-                      </p>
-                    </div>
                   </div>
                 </div>
               </motion.div>
             )}
 
-            {tab === "acoustic" && (
-              <motion.div key="acoustic"
-                initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}
-                exit={{ opacity:0 }} transition={{ duration:.22 }}
-              >
-                <div style={{
-                    display:"grid",
-                    gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-                    gap: isMobile ? 20 : 24,
-                    alignItems:"start",
-                  }}>
-                  <div>
-                    <h2 style={{ fontFamily:"Plus Jakarta Sans,sans-serif",
-                      fontWeight:800, fontSize:16, color:"#0F172A",
-                      margin:"0 0 4px" }}>Acoustic Inputs</h2>
-                    <p style={{ fontSize:12.5, color:"#94A3B8",
-                      fontFamily:"Inter,sans-serif", margin:"0 0 20px" }}>
-                      Enter calculation data and click Run or Save & Calculate
-                    </p>
-                    <AcousticInputForm
-                      projectId={id}
-                      existing={existingCalc}
-                      onSaved={(c) => setExistingCalc(c)}
-                      onResults={(r, rec) => { setCalcResults(r); if(rec) setCalcReceiver(rec); }}
-                    />
-                  </div>
-                  <div>
-                    <h2 style={{ fontFamily:"Plus Jakarta Sans,sans-serif",
-                      fontWeight:800, fontSize:16, color:"#0F172A",
-                      margin:"0 0 4px" }}>Results</h2>
-                    <p style={{ fontSize:12.5, color:"#94A3B8",
-                      fontFamily:"Inter,sans-serif", margin:"0 0 20px" }}>
-                      {calcResults ? "Calculation results" : "Run a calculation to see results here"}
-                    </p>
-                    <AcousticResults
-                      results={calcResults}
-                      receiver={calcReceiver || existingCalc?.receiver}
-                    />
-                    {!calcResults && (
-                      <div style={{ textAlign:"center", padding:"48px 24px",
-                        background:"#F8FAFC", borderRadius:14,
-                        border:"1.5px dashed #E2E8F0" }}>
-                        <p style={{ color:"#94A3B8", fontSize:14,
-                          fontFamily:"Inter,sans-serif" }}>
-                          Fill in the inputs on the left and click<br />
-                          <strong style={{ color:"#0E9F8E" }}>Run Calculation</strong> to see results
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </motion.div>
-            )}
-
+            {/* Version History */}
             {tab === "versions" && (
               <motion.div key="versions"
                 initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}
@@ -637,6 +739,17 @@ export default function ProjectDetailPage() {
                 </div>
               </motion.div>
             )}
+
+            {/* Calculation — module-aware */}
+            {tab === "calc" && (
+              <motion.div key="calc"
+                initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }}
+                exit={{ opacity:0 }} transition={{ duration:.22 }}
+              >
+                {renderCalcContent()}
+              </motion.div>
+            )}
+
           </AnimatePresence>
         </main>
       </div>
@@ -660,7 +773,13 @@ export default function ProjectDetailPage() {
         onDeleted={() => navigate("/engineer")}
       />
 
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .dg-sidebar-desktop{ display:flex !important; flex-direction:column; }
+        @media(max-width:768px){
+          .dg-sidebar-desktop{ display:none !important; }
+        }
+      `}</style>
     </div>
   );
 }

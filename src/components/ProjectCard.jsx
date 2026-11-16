@@ -2,7 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Clock, MapPin, Trash2, Edit2, ArrowRight,
-  GitBranch, Building2, Hash, Wrench,
+  GitBranch, Building2, Hash, Wrench, Layers,
 } from "lucide-react";
 
 const STATUS_STYLES = {
@@ -19,6 +19,14 @@ const PROJECT_TYPE_LABEL = {
   residential: "Residential", hotel: "Hotel", commercial: "Commercial",
   hospital: "Hospital", industrial: "Industrial", data_centre: "Data Centre",
   mixed_use: "Mixed Use", other: "Other",
+};
+
+/* ── Module meta ── */
+const MODULE_META = {
+  module_1: { label: "DG / Pump",  color: "#0E9F8E", bg: "#E3F8F5", accent: "linear-gradient(90deg,#0E9F8E,#1B6CA8)" },
+  module_2: { label: "FCU / Fan",  color: "#6366F1", bg: "#EEF2FF", accent: "linear-gradient(90deg,#6366F1,#8B5CF6)" },
+  module_3: { label: "Module 3",   color: "#F59E0B", bg: "#FFFBEB", accent: "linear-gradient(90deg,#F59E0B,#EF4444)" },
+  module_4: { label: "Module 4",   color: "#94A3B8", bg: "#F8FAFC", accent: "linear-gradient(90deg,#94A3B8,#64748B)" },
 };
 
 const fmt = (d) =>
@@ -44,6 +52,13 @@ export default function ProjectCard({ project, index, onDelete, onEdit }) {
   const equipCount = (project.equipment || []).filter(e => e.type || e.tag).length;
   const detailUrl  = `/engineer/projects/${project._id}`;
 
+  /* Module */
+  const moduleKey  = project.module || "module_1";
+  const mod        = MODULE_META[moduleKey] || MODULE_META.module_1;
+  const modLabel   = moduleKey === "module_2" && project.module2SubType
+    ? (project.module2SubType === "fcu" ? "FCU" : "Fan")
+    : mod.label;
+
   const goToDetail = (e) => {
     if (e) e.stopPropagation();
     navigate(detailUrl);
@@ -62,20 +77,18 @@ export default function ProjectCard({ project, index, onDelete, onEdit }) {
         boxShadow: "0 1px 4px rgba(0,0,0,.06)",
         position: "relative", overflow: "hidden",
       }}
-      whileHover={{ y: -4, boxShadow: "0 8px 32px rgba(0,0,0,.10)", borderColor: "#2EC4B6" }}
+      whileHover={{ y: -4, boxShadow: "0 8px 32px rgba(0,0,0,.10)", borderColor: mod.color }}
     >
       {/* ── Clickable top section ── */}
-      <div
-        onClick={goToDetail}
-        style={{ cursor: "pointer", flex: 1 }}
-      >
-        {/* Accent bar */}
-        <div style={{ height: 3, background: "linear-gradient(90deg,#0E9F8E,#1B6CA8)" }} />
+      <div onClick={goToDetail} style={{ cursor: "pointer", flex: 1 }}>
+
+        {/* Accent bar — colour matches module */}
+        <div style={{ height: 3, background: mod.accent }} />
 
         <div style={{ padding: "18px 20px 14px" }}>
           {/* Header */}
           <div style={{ display: "flex", justifyContent: "space-between",
-            alignItems: "flex-start", gap: 8, marginBottom: 12 }}>
+            alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               {project.jobNumber && (
                 <p style={{ fontSize: 11, color: "#94A3B8", fontWeight: 600,
@@ -91,17 +104,33 @@ export default function ProjectCard({ project, index, onDelete, onEdit }) {
               }}>
                 {project.name}
               </h3>
-              {typeLabel && (
+
+              {/* Type chip + Module badge on same row */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                {typeLabel && (
+                  <span style={{
+                    fontSize: 11, fontWeight: 600, color: "#3B82F6",
+                    background: "#EFF6FF", borderRadius: 99, padding: "2px 8px",
+                    fontFamily: "Inter,sans-serif",
+                  }}>
+                    {typeLabel}
+                  </span>
+                )}
+                {/* Module badge */}
                 <span style={{
-                  display: "inline-block", marginTop: 5,
-                  fontSize: 11, fontWeight: 600, color: "#3B82F6",
-                  background: "#EFF6FF", borderRadius: 99, padding: "2px 8px",
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  fontSize: 11, fontWeight: 700,
+                  color: mod.color, background: mod.bg,
+                  borderRadius: 99, padding: "2px 8px",
                   fontFamily: "Inter,sans-serif",
+                  border: `1px solid ${mod.color}33`,
                 }}>
-                  {typeLabel}
+                  <Layers size={9} />
+                  {modLabel}
                 </span>
-              )}
+              </div>
             </div>
+
             <span style={{
               padding: "4px 10px", borderRadius: 99, flexShrink: 0,
               background: s.bg, color: s.color,
@@ -137,8 +166,8 @@ export default function ProjectCard({ project, index, onDelete, onEdit }) {
       }}>
         <div onClick={goToDetail}
           style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-          <GitBranch size={12} color="#0E9F8E" />
-          <span style={{ fontSize: 11.5, color: "#0E9F8E", fontWeight: 700,
+          <GitBranch size={12} color={mod.color} />
+          <span style={{ fontSize: 11.5, color: mod.color, fontWeight: 700,
             fontFamily: "Inter,sans-serif" }}>
             v{project.currentVersion || 1}
           </span>
@@ -184,12 +213,12 @@ export default function ProjectCard({ project, index, onDelete, onEdit }) {
             onClick={goToDetail}
             style={{
               width: 30, height: 30, borderRadius: 8,
-              border: "1px solid #0E9F8E", background: "#E3F8F5",
+              border: `1px solid ${mod.color}`, background: mod.bg,
               display: "flex", alignItems: "center", justifyContent: "center",
-              color: "#0E9F8E", cursor: "pointer", transition: "all .18s",
+              color: mod.color, cursor: "pointer", transition: "all .18s",
             }}
-            onMouseEnter={e => { e.currentTarget.style.background = "#0E9F8E"; e.currentTarget.style.color = "#fff"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = "#E3F8F5"; e.currentTarget.style.color = "#0E9F8E"; }}
+            onMouseEnter={e => { e.currentTarget.style.background = mod.color; e.currentTarget.style.color = "#fff"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = mod.bg; e.currentTarget.style.color = mod.color; }}
           >
             <ArrowRight size={13} />
           </button>
