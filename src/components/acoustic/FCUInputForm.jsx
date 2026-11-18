@@ -69,6 +69,29 @@ const ERL_TABLE={
   "NC-40":[64.0,56.0,50.0,45.0,41.0,39.0,38.0,37.0],
 };
 function getERL(ncRating){ return ERL_TABLE[ncRating]||ERL_TABLE["NC-18"]; }
+// ERL Case 2 (NC Sheet Method): IL per band = SWL_band - NC_criterion_band (logarithmic subtraction perspective)
+// The grill end reflection needed so that radiated sound equals the NC criterion per band
+function calcERLNC(swlArr, ncRating){
+  const nc=ERL_TABLE[ncRating]||ERL_TABLE["NC-18"];
+  return swlArr.map((swl,i)=>r2(nc[i]-swl)); // positive = NC limit is above SWL (no attenuation needed), negative = attenuation needed
+}
+
+// ERL Case 1 (DG Method): End Reflection Loss from duct opening dimensions
+// Formula: ERL = 10·log10[1 + (a1·c0 / (π·f·D))²] × −1
+// D = sqrt(4·Area/π) in ft  (effective diameter)
+// a1 = 0.7, c0 = 1125.33 ft/s
+function calcERLAcoustic(w_mm, h_mm){
+  const W_ft=(w_mm||0)/304.8, H_ft=(h_mm||0)/304.8;
+  if(!W_ft||!H_ft) return ZERO8();
+  const A_ft2=W_ft*H_ft;
+  const D_ft=Math.sqrt(4*A_ft2/Math.PI);
+  const c0=1125.33, a1=0.7;
+  return BANDS.map(f=>{
+    if(f<=0||D_ft<=0) return 0;
+    const term=(a1*c0)/(Math.PI*f*D_ft);
+    return r2(10*Math.log10(1+term*term)*-1);
+  });
+}
 
 function getElbowRowIdx(width_mm){
   const w=Number(width_mm)||0;
@@ -134,6 +157,17 @@ function logSum(arrays){
 function calcNCRating(lp){
   for(const row of NC_ROWS){ if(!lp.some((v,i)=>v>row.left[i])) return row.nc; } return ">65";
 }
+// SPL → SWL conversion: SWL = SPL + 20·log10(r) + 11  (hemispherical free field, Q=2)
+function splToSwl(splArr, r_m){
+  const r=Math.max(0.01,Number(r_m)||1);
+  const corr=20*Math.log10(r)+11;
+  return splArr.map(v=>r2((v||0)+corr));
+}
+// SWL dB (non-A) → SWL dB(A): add A-weight
+function swlToSwlA(swlArr){ return swlArr.map((v,i)=>r2((v||0)+A_WEIGHT_STD[i])); }
+// SWL dB(A) → SWL dB (non-A): subtract A-weight
+function swlAToSwl(swlArr){ return swlArr.map((v,i)=>r2((v||0)-A_WEIGHT_STD[i])); }
+
 function getRoomEff(mode,rL,rW,rH,rD,dD,dQ){
   if(mode==="spaceRoom") return calcSchultz(rL,rW,rH,rD);
   if(mode==="distEffect"){ const s=calcDistEff(dD,dQ); return BANDS.map(()=>s); }
@@ -150,11 +184,12 @@ function BandInput({value,onCommit}){
   const [focus,setFocus]=useState(false);
   const prev=useRef(value);
   useEffect(()=>{if(!focus&&prev.current!==value){prev.current=value;setLocal(String(value??0));}},[value,focus]);
+  const commit=()=>{setFocus(false);const f=isNaN(parseFloat(local))?0:parseFloat(local);setLocal(String(f));prev.current=f;onCommit(f);};
   return <input type="number" value={local} step="0.1"
     onFocus={e=>{setFocus(true);setLocal(String(value??0));setTimeout(()=>e.target.select(),0);}}
     onChange={e=>setLocal(e.target.value)}
-    onBlur={()=>{setFocus(false);const f=isNaN(parseFloat(local))?0:parseFloat(local);setLocal(String(f));prev.current=f;onCommit(f);}}
-    onKeyDown={e=>e.key==="Enter"&&e.target.blur()}
+    onBlur={commit}
+    onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();e.target.blur();}else if(e.key==="Tab"){commit();}}}
     style={{width:"100%",padding:"7px 4px",border:`1.5px solid ${focus?"#6366F1":"#E2E8F0"}`,borderRadius:6,fontSize:12.5,fontWeight:600,color:"#0F172A",background:"#fff",outline:"none",textAlign:"center",MozAppearance:"textfield",boxShadow:focus?"0 0 0 3px rgba(99,102,241,.1)":"none"}}/>;
 }
 
@@ -163,6 +198,7 @@ function NumInput({label,value,onChange,unit,step=0.1,min}){
   const [focus,setFocus]=useState(false);
   const prev=useRef(value);
   useEffect(()=>{if(!focus&&prev.current!==value){prev.current=value;setLocal(String(value??0));}},[value,focus]);
+  const commit=()=>{setFocus(false);const f=isNaN(parseFloat(local))?0:parseFloat(local);setLocal(String(f));prev.current=f;onChange(f);};
   return (
     <div style={{display:"flex",flexDirection:"column",gap:4}}>
       {label&&<label style={{fontSize:11.5,fontWeight:600,color:"#475569"}}>{label}</label>}
@@ -170,8 +206,8 @@ function NumInput({label,value,onChange,unit,step=0.1,min}){
         <input type="number" value={focus?local:String(value??0)} min={min} step={step}
           onFocus={e=>{setFocus(true);setLocal(String(value??0));setTimeout(()=>e.target.select(),0);}}
           onChange={e=>setLocal(e.target.value)}
-          onBlur={()=>{setFocus(false);const f=isNaN(parseFloat(local))?0:parseFloat(local);setLocal(String(f));prev.current=f;onChange(f);}}
-          onKeyDown={e=>e.key==="Enter"&&e.target.blur()}
+          onBlur={commit}
+          onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commit();e.target.blur();}else if(e.key==="Tab"){commit();}}}
           style={{width:"100%",padding:unit?"9px 36px 9px 10px":"9px 10px",border:`1.5px solid ${focus?"#6366F1":"#E2E8F0"}`,borderRadius:7,fontSize:13.5,background:"#fff",color:"#0F172A",outline:"none",MozAppearance:"textfield",boxShadow:focus?"0 0 0 3px rgba(99,102,241,.1)":"none"}}/>
         {unit&&<span style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",fontSize:10.5,color:"#94A3B8",pointerEvents:"none"}}>{unit}</span>}
       </div>
@@ -190,8 +226,9 @@ function SelectInput({label,value,onChange,options}){
   );
 }
 
-function Section({icon:Icon,title,color="#6366F1",badge,children,defaultOpen=true}){
+function Section({icon:Icon,title,color="#6366F1",badge,children,defaultOpen=true,onToggle,isOn}){
   const [open,setOpen]=useState(defaultOpen);
+  const hasToggle=onToggle!==undefined;
   return (
     <div style={{background:"#fff",borderRadius:14,border:"1px solid #E2E8F0",overflow:"hidden",boxShadow:"0 1px 4px rgba(0,0,0,.05)"}}>
       <button onClick={()=>setOpen(o=>!o)} type="button" style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"13px 16px",background:`${color}0D`,border:"none",borderBottom:open?"1px solid #E2E8F0":"none",cursor:"pointer"}}>
@@ -200,7 +237,13 @@ function Section({icon:Icon,title,color="#6366F1",badge,children,defaultOpen=tru
           <span style={{fontFamily:"Plus Jakarta Sans,sans-serif",fontWeight:700,fontSize:13.5,color:"#0F172A"}}>{title}</span>
           {badge&&<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:99,background:`${color}22`,color}}>{badge}</span>}
         </div>
-        {open?<ChevronUp size={15} color="#94A3B8"/>:<ChevronDown size={15} color="#94A3B8"/>}
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {hasToggle&&<div onClick={e=>{e.stopPropagation();onToggle();}} style={{display:"flex",alignItems:"center",gap:0,borderRadius:99,border:`1.5px solid ${isOn?color:"#CBD5E1"}`,overflow:"hidden",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+            <span style={{padding:"3px 10px",background:isOn?color:"#F8FAFC",color:isOn?"#fff":"#94A3B8",transition:"all .15s"}}>ON</span>
+            <span style={{padding:"3px 10px",background:!isOn?"#64748B":"#F8FAFC",color:!isOn?"#fff":"#94A3B8",transition:"all .15s"}}>OFF</span>
+          </div>}
+          {open?<ChevronUp size={15} color="#94A3B8"/>:<ChevronDown size={15} color="#94A3B8"/>}
+        </div>
       </button>
       <AnimatePresence initial={false}>
         {open&&<motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:.2}} style={{overflow:"hidden"}}><div style={{padding:"16px 16px 18px"}}>{children}</div></motion.div>}
@@ -233,32 +276,79 @@ function ILTable({rows}){
   );
 }
 
-function SWLTable({swlA,onSet}){
+const NOISE_DATA_TYPES=[
+  {v:"swlA", label:"SWL dB(A)",  desc:"A-weighted Sound Power Level"},
+  {v:"swl",  label:"SWL dB",    desc:"Unweighted Sound Power Level"},
+  {v:"splA", label:"SPL dB(A)", desc:"A-weighted Sound Pressure Level at distance r"},
+  {v:"spl",  label:"SPL dB",    desc:"Unweighted Sound Pressure Level at distance r"},
+];
+
+function SWLTable({swlA,onSet,noiseDataType,onTypeChange,splMeasDist,onDistChange,swlAConverted}){
   const arr=BAND_KEYS.map(k=>Number(swlA[k])||0);
-  const nonA=computeNonAWeighted(arr);
+  const nonA=computeNonAWeighted(swlAConverted||arr);
+  const isSPL=noiseDataType==="splA"||noiseDataType==="spl";
+  const inputLabel=NOISE_DATA_TYPES.find(t=>t.v===noiseDataType)?.label||"SWL dB(A)";
   return (
-    <div style={{overflowX:"auto"}}>
-      <table style={{borderCollapse:"collapse",width:"100%",minWidth:640}}>
-        <thead><tr><th style={{...thS,textAlign:"left"}}>Parameter</th>{BANDS.map(b=><th key={b} style={thS}>{b} Hz</th>)}</tr></thead>
-        <tbody>
-          <tr>
-            <td style={tdL}>Sound Power Level dB(A)</td>
-            {BAND_KEYS.map(k=><td key={k} style={{...tdS,padding:"3px"}}><BandInput value={swlA[k]??0} onCommit={v=>onSet({...swlA,[k]:v})}/></td>)}
-          </tr>
-          <tr style={{background:"#F8FAFC"}}>
-            <td style={tdL}>A-Weighting Correction</td>
-            {A_WEIGHT_DISPLAY.map((v,i)=><td key={i} style={tdS}>{v}</td>)}
-          </tr>
-          <tr style={{background:"#E8F5E9"}}>
-            <td style={{...tdL,color:"#1B5E20",fontWeight:700}}>Non A-Weighted SWL (dB)</td>
-            {nonA.map((v,i)=><td key={i} style={{...tdS,color:"#1B5E20",fontWeight:700}}>{v}</td>)}
-          </tr>
-          <tr style={{background:"#FFF9E6"}}>
-            <td style={{...tdL,color:"#92400E",fontWeight:700}}>ENV Correction Factor</td>
-            {ENV_CF.map((v,i)=><td key={i} style={{...tdS,color:"#92400E",fontWeight:700}}>{v}</td>)}
-          </tr>
-        </tbody>
-      </table>
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      {/* Type selector */}
+      <div>
+        <p style={{fontSize:11.5,fontWeight:600,color:"#475569",margin:"0 0 8px"}}>Noise Data Type</p>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {NOISE_DATA_TYPES.map(t=>(
+            <button key={t.v} type="button" onClick={()=>onTypeChange(t.v)}
+              style={{padding:"6px 16px",borderRadius:9,fontSize:12.5,fontWeight:700,cursor:"pointer",
+                border:`1.5px solid ${noiseDataType===t.v?"#6366F1":"#E2E8F0"}`,
+                background:noiseDataType===t.v?"#EEF2FF":"#F8FAFC",
+                color:noiseDataType===t.v?"#4338CA":"#64748B",
+                display:"flex",flexDirection:"column",gap:1}}>
+              <span>{t.label}</span>
+              <span style={{fontSize:9.5,fontWeight:400,color:noiseDataType===t.v?"#6366F1":"#94A3B8"}}>{t.desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* Measurement distance — only for SPL types */}
+      {isSPL&&(
+        <div style={{display:"flex",alignItems:"center",gap:16,padding:"10px 14px",borderRadius:9,background:"#F1F5F9",border:"1px solid #E2E8F0"}}>
+          <span style={{fontSize:12,fontWeight:600,color:"#475569"}}>Measurement Distance (r)</span>
+          <div style={{width:160}}>
+            <NumInput value={splMeasDist||1} unit="m" step={0.5} min={0.1} onChange={onDistChange}/>
+          </div>
+          <span style={{fontSize:11.5,color:"#64748B"}}>SPL → SWL correction: <strong style={{color:"#6366F1"}}>{r2(20*Math.log10(Math.max(0.01,splMeasDist||1))+11)} dB</strong></span>
+        </div>
+      )}
+      {/* Band input table */}
+      <div style={{overflowX:"auto"}}>
+        <table style={{borderCollapse:"collapse",width:"100%",minWidth:640}}>
+          <thead><tr><th style={{...thS,textAlign:"left"}}>Parameter</th>{BANDS.map(b=><th key={b} style={thS}>{b} Hz</th>)}</tr></thead>
+          <tbody>
+            <tr>
+              <td style={tdL}>{inputLabel} — per octave band</td>
+              {BAND_KEYS.map(k=><td key={k} style={{...tdS,padding:"3px"}}><BandInput value={swlA[k]??0} onCommit={v=>onSet({...swlA,[k]:v})}/></td>)}
+            </tr>
+            {isSPL&&<tr style={{background:"#EFF6FF"}}>
+              <td style={{...tdL,color:"#1E40AF",fontWeight:700}}>→ Converted SWL dB(A)</td>
+              {(swlAConverted||arr).map((v,i)=><td key={i} style={{...tdS,color:"#1E40AF",fontWeight:700}}>{v}</td>)}
+            </tr>}
+            {noiseDataType==="swl"&&<tr style={{background:"#EFF6FF"}}>
+              <td style={{...tdL,color:"#1E40AF",fontWeight:700}}>→ SWL dB(A) (after A-weight)</td>
+              {(swlAConverted||arr).map((v,i)=><td key={i} style={{...tdS,color:"#1E40AF",fontWeight:700}}>{v}</td>)}
+            </tr>}
+            <tr style={{background:"#F8FAFC"}}>
+              <td style={tdL}>A-Weighting Correction</td>
+              {A_WEIGHT_DISPLAY.map((v,i)=><td key={i} style={tdS}>{v}</td>)}
+            </tr>
+            <tr style={{background:"#E8F5E9"}}>
+              <td style={{...tdL,color:"#1B5E20",fontWeight:700}}>Non A-Weighted SWL (dB)</td>
+              {nonA.map((v,i)=><td key={i} style={{...tdS,color:"#1B5E20",fontWeight:700}}>{v}</td>)}
+            </tr>
+            <tr style={{background:"#FFF9E6"}}>
+              <td style={{...tdL,color:"#92400E",fontWeight:700}}>ENV Correction Factor</td>
+              {ENV_CF.map((v,i)=><td key={i} style={{...tdS,color:"#92400E",fontWeight:700}}>{v}</td>)}
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -317,12 +407,14 @@ function defaultForm(){
   return {
     calcMode:"sameRoom",   // "sameRoom" | "diffRoom" | "radiated"
     requiredNC:40,
+    noiseDataType:"swlA",  // "swlA" | "swl" | "splA" | "spl"
+    splMeasDist:1,         // measurement distance r in metres (for SPL types)
     swlA:{hz63:0,hz125:0,hz250:0,hz500:0,hz1000:0,hz2000:0,hz4000:0,hz8000:0},
     // PATH 1 — Supply Duct (all modes that have supply)
     p1_on:true,
     p1_ducts:[defaultDuct(0)],
-    p1_flexW:200,p1_flexLen:0,
-    p1_erlW:0,p1_erlH:0,p1_erlNum:1,p1_erlNC:"NC-18",
+    p1_flexOn:true,p1_flexW:200,p1_flexLen:0,
+    p1_erlOn:true,p1_erlCase:"case1",p1_erlW:0,p1_erlH:0,p1_erlNum:1,p1_erlNC:"NC-18",
     p1_roomMode:"spaceRoom",
     p1_roomLen:0,p1_roomWid:0,p1_roomHei:0,p1_roomDist:0,
     p1_distDist:0,p1_distQ:2,
@@ -330,15 +422,17 @@ function defaultForm(){
     p2_on:true,
     // sameRoom P2 — full return duct chain
     p2_ducts:[defaultReturnDuct(0)],
-    p2_flexW:200,p2_flexLen:0,
-    p2_erlW:0,p2_erlH:0,p2_erlNum:1,p2_erlNC:"NC-15",
+    p2_flexOn:true,p2_flexW:200,p2_flexLen:0,
+    p2_erlOn:true,p2_erlCase:"case1",p2_erlW:0,p2_erlH:0,p2_erlNum:1,p2_erlNC:"NC-15",
+    p2_grillDistOn:false,p2_grillDistMode:"distEffect",p2_grillDistDist:1,p2_grillDistQ:2,
     p2_roomMode:"spaceRoom",
     p2_roomLen:0,p2_roomWid:0,p2_roomHei:0,p2_roomDist:0,
     p2_distDist:0,p2_distQ:2,
     // diffRoom P2 — separate full return duct chain
     p2dr_ducts:[defaultReturnDuct(0)],
-    p2dr_flexW:200,p2dr_flexLen:0,
-    p2dr_erlW:0,p2dr_erlH:0,p2dr_erlNum:1,p2dr_erlNC:"NC-15",
+    p2dr_flexOn:true,p2dr_flexW:200,p2dr_flexLen:0,
+    p2dr_erlOn:true,p2dr_erlCase:"case1",p2dr_erlW:0,p2dr_erlH:0,p2dr_erlNum:1,p2dr_erlNC:"NC-15",
+    p2dr_grillDistOn:false,p2dr_grillDistMode:"distEffect",p2dr_grillDistDist:1,p2dr_grillDistQ:2,
     p2dr_roomMode:"spaceRoom",
     p2dr_roomLen:0,p2dr_roomWid:0,p2dr_roomHei:0,p2dr_roomDist:0,
     p2dr_distDist:0,p2dr_distQ:2,
@@ -390,8 +484,17 @@ export default function FCUInputForm({project}){
   const patchP2drDuct=useCallback((idx,patch)=>setForm(f=>({...f,p2dr_ducts:f.p2dr_ducts.map((d,i)=>i===idx?{...d,...patch}:d)})),[]);
   const patchP2drCoeffA=useCallback((idx,k,v)=>setForm(f=>({...f,p2dr_ducts:f.p2dr_ducts.map((d,i)=>i===idx?{...d,coeffA:{...d.coeffA,[k]:v}}:d)})),[]);
 
-  const SWL=computeNonAWeighted(BAND_KEYS.map(k=>Number(form.swlA[k])||0));
-  const SWL_A_arr=BAND_KEYS.map(k=>Number(form.swlA[k])||0);
+  // Derive SWL dB(A) from whatever input type the user chose
+  const rawInput=BAND_KEYS.map(k=>Number(form.swlA[k])||0);
+  const r_meas=form.splMeasDist||1;
+  const SWL_A_arr = (() => {
+    if(form.noiseDataType==="swlA") return rawInput;                        // SWL dB(A) — input as-is
+    if(form.noiseDataType==="swl")  return swlToSwlA(rawInput);             // SWL dB → +A-weight
+    if(form.noiseDataType==="splA") return splToSwl(rawInput,r_meas);       // SPL dB(A) → SWL dB(A)
+    if(form.noiseDataType==="spl")  return swlToSwlA(splToSwl(rawInput,r_meas)); // SPL dB → SWL dB → +A-weight
+    return rawInput;
+  })();
+  const SWL=computeNonAWeighted(SWL_A_arr);
 
   const isSameRoom = form.calcMode==="sameRoom";
   const isDiffRoom = form.calcMode==="diffRoom";
@@ -400,29 +503,34 @@ export default function FCUInputForm({project}){
   // ── PATH 1 ── (supply duct, used in sameRoom + diffRoom)
   const p1_ductResults = calcDuctChain(form.p1_ducts||[]);
   const p1_allDuctIL   = BANDS.map((_,i)=>p1_ductResults.reduce((s,r)=>s+r.totalIL[i],0));
-  const p1_flexIL      = calcFlexIL(form.p1_flexW,form.p1_flexLen);
+  const p1_flexIL      = form.p1_flexOn?calcFlexIL(form.p1_flexW,form.p1_flexLen):ZERO8();
   const p1_roomEff     = getRoomEff(form.p1_roomMode,form.p1_roomLen,form.p1_roomWid,form.p1_roomHei,form.p1_roomDist,form.p1_distDist,form.p1_distQ);
-  const p1_totalLp     = SWL.map((_,i)=>r1(SWL[i]+ENV_CF[i]+p1_allDuctIL[i]+p1_flexIL[i]+p1_roomEff[i]));
-  const p1_erl         = getERL(form.p1_erlNC);
-  const p1_final       = p1_totalLp.map((v,i)=>r2(10*Math.log10(Math.pow(10,v/10)+Math.pow(10,p1_erl[i]/10))));
+  const p1_erl         = form.p1_erlOn?(form.p1_erlCase==="case1"?calcERLAcoustic(form.p1_erlW,form.p1_erlH):calcERLNC(SWL_A_arr,form.p1_erlNC)):ZERO8();
+  const p1_preTotalLp  = SWL.map((_,i)=>r1(SWL[i]+ENV_CF[i]+p1_allDuctIL[i]+p1_flexIL[i]+p1_roomEff[i]));
+  const p1_totalLp     = p1_preTotalLp.map((v,i)=>r1(v+p1_erl[i]));
+  const p1_final       = p1_totalLp;
 
   // ── PATH 2 — sameRoom (full return duct chain, SWL_A) ──
   const p2_ductResults = calcDuctChain(form.p2_ducts||[]);
   const p2_allDuctIL   = BANDS.map((_,i)=>p2_ductResults.reduce((s,r)=>s+r.totalIL[i],0));
-  const p2_flexIL      = calcFlexIL(form.p2_flexW,form.p2_flexLen);
+  const p2_flexIL      = form.p2_flexOn?calcFlexIL(form.p2_flexW,form.p2_flexLen):ZERO8();
+  const p2_grillDistEff = form.p2_grillDistOn?getRoomEff(form.p2_grillDistMode,"","","","",form.p2_grillDistDist,form.p2_grillDistQ):ZERO8();
   const p2_roomEff     = getRoomEff(form.p2_roomMode,form.p2_roomLen,form.p2_roomWid,form.p2_roomHei,form.p2_roomDist,form.p2_distDist,form.p2_distQ);
-  const p2_totalLp     = SWL_A_arr.map((_,i)=>r1(SWL_A_arr[i]+ENV_CF[i]+p2_allDuctIL[i]+p2_flexIL[i]+p2_roomEff[i]));
-  const p2_erl         = getERL(form.p2_erlNC);
-  const p2_final       = p2_totalLp.map((v,i)=>r2(10*Math.log10(Math.pow(10,v/10)+Math.pow(10,p2_erl[i]/10))));
+  const p2_erl         = form.p2_erlOn?(form.p2_erlCase==="case1"?calcERLAcoustic(form.p2_erlW,form.p2_erlH):calcERLNC(SWL_A_arr,form.p2_erlNC)):ZERO8();
+  const p2_preTotalLp  = SWL_A_arr.map((_,i)=>r1(SWL_A_arr[i]+ENV_CF[i]+p2_allDuctIL[i]+p2_flexIL[i]+p2_grillDistEff[i]+p2_roomEff[i]));
+  const p2_totalLp     = p2_preTotalLp.map((v,i)=>r1(v+p2_erl[i]));
+  const p2_final       = p2_totalLp;
 
   // ── PATH 2 — diffRoom (full return duct chain, SWL_A) ──
   const p2dr_ductResults = calcDuctChain(form.p2dr_ducts||[]);
   const p2dr_allDuctIL   = BANDS.map((_,i)=>p2dr_ductResults.reduce((s,r)=>s+r.totalIL[i],0));
-  const p2dr_flexIL      = calcFlexIL(form.p2dr_flexW,form.p2dr_flexLen);
+  const p2dr_flexIL      = form.p2dr_flexOn?calcFlexIL(form.p2dr_flexW,form.p2dr_flexLen):ZERO8();
+  const p2dr_grillDistEff = form.p2dr_grillDistOn?getRoomEff(form.p2dr_grillDistMode,"","","","",form.p2dr_grillDistDist,form.p2dr_grillDistQ):ZERO8();
   const p2dr_roomEff     = getRoomEff(form.p2dr_roomMode,form.p2dr_roomLen,form.p2dr_roomWid,form.p2dr_roomHei,form.p2dr_roomDist,form.p2dr_distDist,form.p2dr_distQ);
-  const p2dr_totalLp     = SWL_A_arr.map((_,i)=>r1(SWL_A_arr[i]+ENV_CF[i]+p2dr_allDuctIL[i]+p2dr_flexIL[i]+p2dr_roomEff[i]));
-  const p2dr_erl         = getERL(form.p2dr_erlNC);
-  const p2dr_final       = p2dr_totalLp.map((v,i)=>r2(10*Math.log10(Math.pow(10,v/10)+Math.pow(10,p2dr_erl[i]/10))));
+  const p2dr_erl         = form.p2dr_erlOn?(form.p2dr_erlCase==="case1"?calcERLAcoustic(form.p2dr_erlW,form.p2dr_erlH):calcERLNC(SWL_A_arr,form.p2dr_erlNC)):ZERO8();
+  const p2dr_preTotalLp  = SWL_A_arr.map((_,i)=>r1(SWL_A_arr[i]+ENV_CF[i]+p2dr_allDuctIL[i]+p2dr_flexIL[i]+p2dr_grillDistEff[i]+p2dr_roomEff[i]));
+  const p2dr_totalLp     = p2dr_preTotalLp.map((v,i)=>r1(v+p2dr_erl[i]));
+  const p2dr_final       = p2dr_totalLp;
 
   // ── PATH 3 — Radiated ──
   const p3_ceilTL  = FALSE_CEILING[form.p3_material]||FALSE_CEILING["12.5mm Gypsum Board"];
@@ -595,9 +703,9 @@ export default function FCUInputForm({project}){
                   </div>
                 )}
                 <ILTable rows={[
+                  ...(idx>0&&d.branchIncluded?[{label:"Branch Power Division IL (dB)",values:BANDS.map(()=>res.branchDB),color}]:[]),
                   {label:`${isLined?"Lined":"Unlined"} Duct IL (dB)`,values:res.ductIL,color},
                   ...(Number(d.elbows)>0?[{label:`Elbow IL ×${d.elbows} (dB)`,values:res.elbowIL,color}]:[]),
-                  ...(d.branchIncluded?[{label:"Branch Power Division IL (dB)",values:BANDS.map(()=>res.branchDB),color}]:[]),
                   {label:"Total IL this duct (dB)",values:res.totalIL,color:textCol,highlight:"total"},
                 ]}/>
               </div>
@@ -621,21 +729,35 @@ export default function FCUInputForm({project}){
           ducts={form.p1_ducts} results={p1_ductResults} color={c}
           onAdd={addP1Duct} onRemove={removeP1Duct} onPatch={patchP1Duct} onPatchCoeffA={patchP1CoeffA}
         />
-        <Section icon={Wind} title="Flexible Duct — Insertion Loss" color={c}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+        <Section icon={Wind} title="Flexible Duct — Insertion Loss" color={c} onToggle={()=>set("p1_flexOn",!form.p1_flexOn)} isOn={form.p1_flexOn}>
+          {form.p1_flexOn&&<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
             <SelectInput label="Flex Duct Diameter (mm)" value={String(form.p1_flexW)} onChange={v=>set("p1_flexW",Number(v))} options={FLEX_TABLE.map(r=>({value:String(r.w),label:`Ø${r.w} mm`}))}/>
             <NumInput label="Length (m)" value={form.p1_flexLen} unit="m" onChange={v=>set("p1_flexLen",v)}/>
           </div>
-          <ILTable rows={[{label:"Flexible Duct IL (dB)",values:p1_flexIL,color:c}]}/>
+          <ILTable rows={[{label:"Flexible Duct IL (dB)",values:p1_flexIL,color:c}]}/></>}
         </Section>
-        <Section icon={Calculator} title="End Reflection Factor (ERL) — Diffuser / Grill" color={c}>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:10}}>
-            <NumInput label="Diffuser Width (mm)"  value={form.p1_erlW} step={1} unit="mm" onChange={v=>set("p1_erlW",v)}/>
-            <NumInput label="Diffuser Height (mm)" value={form.p1_erlH} step={1} unit="mm" onChange={v=>set("p1_erlH",v)}/>
-            <NumInput label="No. of Diffusers"     value={form.p1_erlNum} step={1} min={1} onChange={v=>set("p1_erlNum",Math.max(1,Math.round(v)))}/>
-            <SelectInput label="NC Rating" value={form.p1_erlNC} onChange={v=>set("p1_erlNC",v)} options={Object.keys(ERL_TABLE).map(k=>({value:k,label:k}))}/>
-          </div>
-          <ILTable rows={[{label:`End Reflection Factor — ${form.p1_erlNC} (dB)`,values:p1_erl,color:c}]}/>
+        <Section icon={Calculator} title="End Reflection Factor (ERL) — Diffuser / Grill" color={c} onToggle={()=>set("p1_erlOn",!form.p1_erlOn)} isOn={form.p1_erlOn}>
+          {form.p1_erlOn&&<>
+            <div style={{display:"flex",gap:6,marginBottom:12}}>
+              {[{v:"case1",label:"Case 1 — DG Method (Duct Dimensions)"},{v:"case2",label:"Case 2 — NC Table Lookup"}].map(o=>(
+                <button key={o.v} type="button" onClick={()=>set("p1_erlCase",o.v)}
+                  style={{padding:"5px 14px",borderRadius:99,fontSize:12,fontWeight:700,cursor:"pointer",
+                    border:`1.5px solid ${form.p1_erlCase===o.v?c:"#CBD5E1"}`,
+                    background:form.p1_erlCase===o.v?c:"#F8FAFC",
+                    color:form.p1_erlCase===o.v?"#fff":"#64748B"}}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            {form.p1_erlCase==="case1"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <NumInput label="Diffuser Width (mm)"  value={form.p1_erlW} step={1} unit="mm" onChange={v=>set("p1_erlW",v)}/>
+              <NumInput label="Diffuser Height (mm)" value={form.p1_erlH} step={1} unit="mm" onChange={v=>set("p1_erlH",v)}/>
+            </div>}
+            {form.p1_erlCase==="case2"&&<div style={{display:"grid",gridTemplateColumns:"1fr",gap:10,marginBottom:10}}>
+              <SelectInput label="NC Rating" value={form.p1_erlNC} onChange={v=>set("p1_erlNC",v)} options={Object.keys(ERL_TABLE).map(k=>({value:k,label:k}))}/>
+            </div>}
+            <ILTable rows={[{label:form.p1_erlCase==="case1"?`ERL Case 1 (DG) — ${form.p1_erlW}×${form.p1_erlH}mm (dB)`:`End Reflection Factor — ${form.p1_erlNC} (dB)`,values:p1_erl,color:c}]}/>
+          </>}
         </Section>
         <Section icon={Layers} title="Space / Room Effect @ Receiver (POINT SOURCE)" color={c}>
           <RoomDistSelector value={form.p1_roomMode} onChange={v=>set("p1_roomMode",v)}/>
@@ -676,7 +798,14 @@ export default function FCUInputForm({project}){
 
       {/* SWL */}
       <Section icon={Waves} title="Sound Power Level" color="#6366F1">
-        <SWLTable swlA={form.swlA} onSet={v=>set("swlA",v)}/>
+        <SWLTable
+          swlA={form.swlA} onSet={v=>set("swlA",v)}
+          noiseDataType={form.noiseDataType||"swlA"}
+          onTypeChange={v=>set("noiseDataType",v)}
+          splMeasDist={form.splMeasDist||1}
+          onDistChange={v=>set("splMeasDist",v)}
+          swlAConverted={SWL_A_arr}
+        />
       </Section>
 
       {/* ═══ SAME ROOM MODE ═══ */}
@@ -696,21 +825,45 @@ export default function FCUInputForm({project}){
               ducts={form.p2_ducts} results={p2_ductResults} color="#3B82F6"
               onAdd={addP2Duct} onRemove={removeP2Duct} onPatch={patchP2Duct} onPatchCoeffA={patchP2CoeffA}
             />
-            <Section icon={Wind} title="Flexible Duct — Insertion Loss (Return)" color="#3B82F6">
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <Section icon={Wind} title="Flexible Duct — Insertion Loss (Return)" color="#3B82F6" onToggle={()=>set("p2_flexOn",!form.p2_flexOn)} isOn={form.p2_flexOn}>
+              {form.p2_flexOn&&<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
                 <SelectInput label="Flex Duct Diameter (mm)" value={String(form.p2_flexW)} onChange={v=>set("p2_flexW",Number(v))} options={FLEX_TABLE.map(r=>({value:String(r.w),label:`Ø${r.w} mm`}))}/>
                 <NumInput label="Length (m)" value={form.p2_flexLen} unit="m" onChange={v=>set("p2_flexLen",v)}/>
               </div>
-              <ILTable rows={[{label:"Flexible Duct IL (dB)",values:p2_flexIL,color:"#3B82F6"}]}/>
+              <ILTable rows={[{label:"Flexible Duct IL (dB)",values:p2_flexIL,color:"#3B82F6"}]}/></>}
             </Section>
-            <Section icon={Calculator} title="End Reflection Factor (ERL) — R/A Grill" color="#3B82F6">
-              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:10}}>
-                <NumInput label="Grill Width (mm)"  value={form.p2_erlW} step={1} unit="mm" onChange={v=>set("p2_erlW",v)}/>
-                <NumInput label="Grill Height (mm)" value={form.p2_erlH} step={1} unit="mm" onChange={v=>set("p2_erlH",v)}/>
-                <NumInput label="No. of Grills"     value={form.p2_erlNum} step={1} min={1} onChange={v=>set("p2_erlNum",Math.max(1,Math.round(v)))}/>
-                <SelectInput label="NC Rating" value={form.p2_erlNC} onChange={v=>set("p2_erlNC",v)} options={Object.keys(ERL_TABLE).map(k=>({value:k,label:k}))}/>
-              </div>
-              <ILTable rows={[{label:`End Reflection Factor — ${form.p2_erlNC} (dB)`,values:p2_erl,color:"#3B82F6"}]}/>
+            <Section icon={Calculator} title="End Reflection Factor (ERL) — R/A Grill" color="#3B82F6" onToggle={()=>set("p2_erlOn",!form.p2_erlOn)} isOn={form.p2_erlOn}>
+              {form.p2_erlOn&&<>
+                <div style={{display:"flex",gap:6,marginBottom:12}}>
+                  {[{v:"case1",label:"Case 1 — DG Method (Duct Dimensions)"},{v:"case2",label:"Case 2 — NC Table Lookup"}].map(o=>(
+                    <button key={o.v} type="button" onClick={()=>set("p2_erlCase",o.v)}
+                      style={{padding:"5px 14px",borderRadius:99,fontSize:12,fontWeight:700,cursor:"pointer",
+                        border:`1.5px solid ${form.p2_erlCase===o.v?"#3B82F6":"#CBD5E1"}`,
+                        background:form.p2_erlCase===o.v?"#3B82F6":"#F8FAFC",
+                        color:form.p2_erlCase===o.v?"#fff":"#64748B"}}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+                {form.p2_erlCase==="case1"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <NumInput label="Grill Width (mm)"  value={form.p2_erlW} step={1} unit="mm" onChange={v=>set("p2_erlW",v)}/>
+                  <NumInput label="Grill Height (mm)" value={form.p2_erlH} step={1} unit="mm" onChange={v=>set("p2_erlH",v)}/>
+                </div>}
+                {form.p2_erlCase==="case2"&&<div style={{display:"grid",gridTemplateColumns:"1fr",gap:10,marginBottom:10}}>
+                  <SelectInput label="NC Rating" value={form.p2_erlNC} onChange={v=>set("p2_erlNC",v)} options={Object.keys(ERL_TABLE).map(k=>({value:k,label:k}))}/>
+                </div>}
+                <ILTable rows={[{label:form.p2_erlCase==="case1"?`ERL Case 1 (DG) — Grill ${form.p2_erlW}×${form.p2_erlH}mm (dB)`:`End Reflection Factor — ${form.p2_erlNC} (dB)`,values:p2_erl,color:"#3B82F6"}]}/>
+              </>}
+            </Section>
+            <Section icon={Wind} title="Space / Distance Effect — R/A Duct to Grill" color="#3B82F6" onToggle={()=>set("p2_grillDistOn",!form.p2_grillDistOn)} isOn={form.p2_grillDistOn}>
+              {form.p2_grillDistOn&&<>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:10,margin:"10px 0"}}>
+                  <NumInput label="Distance — Duct to Grill (m)" value={form.p2_grillDistDist||1} unit="m" onChange={v=>set("p2_grillDistDist",v)}/>
+                  <NumInput label="Directivity Q" value={form.p2_grillDistQ||2} step={1} onChange={v=>set("p2_grillDistQ",v)}/>
+                  <div style={{display:"flex",alignItems:"flex-end",paddingBottom:4}}><span style={{fontSize:12,color:"#475569"}}>= <strong style={{color:"#3B82F6"}}>{r2(calcDistEff(form.p2_grillDistDist||1,form.p2_grillDistQ||2))} dB</strong></span></div>
+                </div>
+                <ILTable rows={[{label:"Distance Effect — R/A Duct to Grill (dB)",values:p2_grillDistEff,color:"#3B82F6"}]}/>
+              </>}
             </Section>
             <Section icon={Layers} title="Space / Room Effect @ Receiver (POINT SOURCE)" color="#3B82F6">
               <RoomDistSelector value={form.p2_roomMode} onChange={v=>set("p2_roomMode",v)}/>
@@ -753,21 +906,45 @@ export default function FCUInputForm({project}){
               ducts={form.p2dr_ducts} results={p2dr_ductResults} color="#3B82F6"
               onAdd={addP2drDuct} onRemove={removeP2drDuct} onPatch={patchP2drDuct} onPatchCoeffA={patchP2drCoeffA}
             />
-            <Section icon={Wind} title="Flexible Duct — Insertion Loss (Return)" color="#3B82F6">
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+            <Section icon={Wind} title="Flexible Duct — Insertion Loss (Return)" color="#3B82F6" onToggle={()=>set("p2dr_flexOn",!form.p2dr_flexOn)} isOn={form.p2dr_flexOn}>
+              {form.p2dr_flexOn&&<><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
                 <SelectInput label="Flex Duct Diameter (mm)" value={String(form.p2dr_flexW)} onChange={v=>set("p2dr_flexW",Number(v))} options={FLEX_TABLE.map(r=>({value:String(r.w),label:`Ø${r.w} mm`}))}/>
                 <NumInput label="Length (m)" value={form.p2dr_flexLen} unit="m" onChange={v=>set("p2dr_flexLen",v)}/>
               </div>
-              <ILTable rows={[{label:"Flexible Duct IL (dB)",values:p2dr_flexIL,color:"#3B82F6"}]}/>
+              <ILTable rows={[{label:"Flexible Duct IL (dB)",values:p2dr_flexIL,color:"#3B82F6"}]}/></>}
             </Section>
-            <Section icon={Calculator} title="End Reflection Factor (ERL) — R/A Grill" color="#3B82F6">
-              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:10}}>
-                <NumInput label="Grill Width (mm)"  value={form.p2dr_erlW} step={1} unit="mm" onChange={v=>set("p2dr_erlW",v)}/>
-                <NumInput label="Grill Height (mm)" value={form.p2dr_erlH} step={1} unit="mm" onChange={v=>set("p2dr_erlH",v)}/>
-                <NumInput label="No. of Grills"     value={form.p2dr_erlNum} step={1} min={1} onChange={v=>set("p2dr_erlNum",Math.max(1,Math.round(v)))}/>
-                <SelectInput label="NC Rating" value={form.p2dr_erlNC} onChange={v=>set("p2dr_erlNC",v)} options={Object.keys(ERL_TABLE).map(k=>({value:k,label:k}))}/>
-              </div>
-              <ILTable rows={[{label:`End Reflection Factor — ${form.p2dr_erlNC} (dB)`,values:p2dr_erl,color:"#3B82F6"}]}/>
+            <Section icon={Calculator} title="End Reflection Factor (ERL) — R/A Grill" color="#3B82F6" onToggle={()=>set("p2dr_erlOn",!form.p2dr_erlOn)} isOn={form.p2dr_erlOn}>
+              {form.p2dr_erlOn&&<>
+                <div style={{display:"flex",gap:6,marginBottom:12}}>
+                  {[{v:"case1",label:"Case 1 — DG Method (Duct Dimensions)"},{v:"case2",label:"Case 2 — NC Table Lookup"}].map(o=>(
+                    <button key={o.v} type="button" onClick={()=>set("p2dr_erlCase",o.v)}
+                      style={{padding:"5px 14px",borderRadius:99,fontSize:12,fontWeight:700,cursor:"pointer",
+                        border:`1.5px solid ${form.p2dr_erlCase===o.v?"#3B82F6":"#CBD5E1"}`,
+                        background:form.p2dr_erlCase===o.v?"#3B82F6":"#F8FAFC",
+                        color:form.p2dr_erlCase===o.v?"#fff":"#64748B"}}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+                {form.p2dr_erlCase==="case1"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <NumInput label="Grill Width (mm)"  value={form.p2dr_erlW} step={1} unit="mm" onChange={v=>set("p2dr_erlW",v)}/>
+                  <NumInput label="Grill Height (mm)" value={form.p2dr_erlH} step={1} unit="mm" onChange={v=>set("p2dr_erlH",v)}/>
+                </div>}
+                {form.p2dr_erlCase==="case2"&&<div style={{display:"grid",gridTemplateColumns:"1fr",gap:10,marginBottom:10}}>
+                  <SelectInput label="NC Rating" value={form.p2dr_erlNC} onChange={v=>set("p2dr_erlNC",v)} options={Object.keys(ERL_TABLE).map(k=>({value:k,label:k}))}/>
+                </div>}
+                <ILTable rows={[{label:form.p2dr_erlCase==="case1"?`ERL Case 1 (DG) — Grill ${form.p2dr_erlW}×${form.p2dr_erlH}mm (dB)`:`End Reflection Factor — ${form.p2dr_erlNC} (dB)`,values:p2dr_erl,color:"#3B82F6"}]}/>
+              </>}
+            </Section>
+            <Section icon={Wind} title="Space / Distance Effect — R/A Duct to Grill" color="#3B82F6" onToggle={()=>set("p2dr_grillDistOn",!form.p2dr_grillDistOn)} isOn={form.p2dr_grillDistOn}>
+              {form.p2dr_grillDistOn&&<>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:10,margin:"10px 0"}}>
+                  <NumInput label="Distance — Duct to Grill (m)" value={form.p2dr_grillDistDist||1} unit="m" onChange={v=>set("p2dr_grillDistDist",v)}/>
+                  <NumInput label="Directivity Q" value={form.p2dr_grillDistQ||2} step={1} onChange={v=>set("p2dr_grillDistQ",v)}/>
+                  <div style={{display:"flex",alignItems:"flex-end",paddingBottom:4}}><span style={{fontSize:12,color:"#475569"}}>= <strong style={{color:"#3B82F6"}}>{r2(calcDistEff(form.p2dr_grillDistDist||1,form.p2dr_grillDistQ||2))} dB</strong></span></div>
+                </div>
+                <ILTable rows={[{label:"Distance Effect — R/A Duct to Grill (dB)",values:p2dr_grillDistEff,color:"#3B82F6"}]}/>
+              </>}
             </Section>
             <Section icon={Layers} title="Space / Room Effect @ Receiver (POINT SOURCE)" color="#3B82F6">
               <RoomDistSelector value={form.p2dr_roomMode} onChange={v=>set("p2dr_roomMode",v)}/>
@@ -808,19 +985,19 @@ export default function FCUInputForm({project}){
         <ILTable rows={[
           {label:"Sound Power Level (non A-wtd) dB",values:SWL},
           {label:"Environmental Correction Factor",  values:ENV_CF},
-          ...(p1_ductResults.flatMap(res=>{
-            const d=res.d,isLined=d.type==="lined";
-            return [
-              {label:`${d.label} — ${isLined?"Lined":"Unlined"} Duct IL (dB)`,values:res.ductIL},
-              ...(Number(d.elbows)>0?[{label:`${d.label} — Elbow IL ×${d.elbows} (dB)`,values:res.elbowIL}]:[]),
-              ...(d.branchIncluded?[{label:`${d.label} — Branch Power Division (dB)`,values:BANDS.map(()=>res.branchDB)}]:[]),
-            ];
-          })),
-          {label:"Flexible Duct Insertion Loss (dB)",values:p1_flexIL},
-          {label:`End Reflection Factor (${form.p1_erlNC}) — Grill/Diffuser`,values:p1_erl},
+          ...(p1_ductResults.filter((res,idx)=>idx>0&&res.d.branchIncluded).map(res=>({label:`${res.d.label} — Branch Power Division (dB)`,values:BANDS.map(()=>res.branchDB)}))),
+          ...(p1_ductResults.filter(res=>res.d.type==="unlined").flatMap(res=>[
+            {label:`${res.d.label} — Unlined Duct IL (dB)`,values:res.ductIL},
+            ...(Number(res.d.elbows)>0?[{label:`${res.d.label} — Elbow IL ×${res.d.elbows} (dB)`,values:res.elbowIL}]:[]),
+          ])),
+          ...(p1_ductResults.filter(res=>res.d.type==="lined").flatMap(res=>[
+            {label:`${res.d.label} — Lined Duct IL (dB)`,values:res.ductIL},
+            ...(Number(res.d.elbows)>0?[{label:`${res.d.label} — Elbow IL ×${res.d.elbows} (dB)`,values:res.elbowIL}]:[]),
+          ])),
+          ...(form.p1_flexOn?[{label:"Flexible Duct Insertion Loss (dB)",values:p1_flexIL}]:[]),
           {label:form.p1_roomMode==="spaceRoom"?"Space/Room Effect @ Receiver (dB)":"Distance Effect (dB)",values:p1_roomEff},
-          {label:"Total Transmission Loss Lp @ Receiver (dB)",values:p1_totalLp,highlight:"total"},
-          {label:"Calculated Final Noise (dB)",values:p1_final,highlight:"final",color:"#065F46"},
+          ...(form.p1_erlOn?[{label:form.p1_erlCase==="case1"?`ERL Case 1 (DG) — Diffuser ${form.p1_erlW}×${form.p1_erlH}mm (dB)`:`End Reflection Factor (${form.p1_erlNC}) — Grill/Diffuser`,values:p1_erl}]:[]),
+          {label:"Total Lp @ Receiver (dB)",values:p1_totalLp,highlight:"total",color:"#065F46"},
         ]}/>
       </Section>}
 
@@ -829,19 +1006,20 @@ export default function FCUInputForm({project}){
         <ILTable rows={[
           {label:"Sound Power Level dB(A)",values:SWL_A_arr},
           {label:"Environmental Correction Factor",values:ENV_CF},
-          ...(p2_ductResults.flatMap(res=>{
-            const d=res.d,isLined=d.type==="lined";
-            return [
-              {label:`${d.label} — ${isLined?"Lined":"Unlined"} Duct IL (dB)`,values:res.ductIL},
-              ...(Number(d.elbows)>0?[{label:`${d.label} — Elbow IL ×${d.elbows} (dB)`,values:res.elbowIL}]:[]),
-              ...(d.branchIncluded?[{label:`${d.label} — Branch Power Division (dB)`,values:BANDS.map(()=>res.branchDB)}]:[]),
-            ];
-          })),
-          {label:"Flexible Duct Insertion Loss — Return (dB)",values:p2_flexIL},
-          {label:`End Reflection Factor (${form.p2_erlNC}) — R/A Grill`,values:p2_erl},
+          ...(p2_ductResults.filter((res,idx)=>idx>0&&res.d.branchIncluded).map(res=>({label:`${res.d.label} — Branch Power Division (dB)`,values:BANDS.map(()=>res.branchDB)}))),
+          ...(p2_ductResults.filter(res=>res.d.type==="unlined").flatMap(res=>[
+            {label:`${res.d.label} — Unlined Duct IL (dB)`,values:res.ductIL},
+            ...(Number(res.d.elbows)>0?[{label:`${res.d.label} — Elbow IL ×${res.d.elbows} (dB)`,values:res.elbowIL}]:[]),
+          ])),
+          ...(p2_ductResults.filter(res=>res.d.type==="lined").flatMap(res=>[
+            {label:`${res.d.label} — Lined Duct IL (dB)`,values:res.ductIL},
+            ...(Number(res.d.elbows)>0?[{label:`${res.d.label} — Elbow IL ×${res.d.elbows} (dB)`,values:res.elbowIL}]:[]),
+          ])),
+          ...(form.p2_flexOn?[{label:"Flexible Duct Insertion Loss — Return (dB)",values:p2_flexIL}]:[]),
+          ...(form.p2_grillDistOn?[{label:"Distance Effect — R/A Duct to Grill (dB)",values:p2_grillDistEff}]:[]),
           {label:form.p2_roomMode==="spaceRoom"?"Space/Room Effect @ Receiver (dB)":"Distance Effect (dB)",values:p2_roomEff},
-          {label:"Total Transmission Loss Lp @ Receiver (dB)",values:p2_totalLp,highlight:"total"},
-          {label:"Calculated Final Noise (dB)",values:p2_final,highlight:"final",color:"#1E40AF"},
+          ...(form.p2_erlOn?[{label:form.p2_erlCase==="case1"?`ERL Case 1 (DG) — Grill ${form.p2_erlW}×${form.p2_erlH}mm (dB)`:`End Reflection Factor (${form.p2_erlNC}) — R/A Grill`,values:p2_erl}]:[]),
+          {label:"Total Lp @ Receiver (dB)",values:p2_totalLp,highlight:"total",color:"#1E40AF"},
         ]}/>
       </Section>}
 
@@ -850,19 +1028,20 @@ export default function FCUInputForm({project}){
         <ILTable rows={[
           {label:"Sound Power Level dB(A)",values:SWL_A_arr},
           {label:"Environmental Correction Factor",values:ENV_CF},
-          ...(p2dr_ductResults.flatMap(res=>{
-            const d=res.d,isLined=d.type==="lined";
-            return [
-              {label:`${d.label} — ${isLined?"Lined":"Unlined"} Duct IL (dB)`,values:res.ductIL},
-              ...(Number(d.elbows)>0?[{label:`${d.label} — Elbow IL ×${d.elbows} (dB)`,values:res.elbowIL}]:[]),
-              ...(d.branchIncluded?[{label:`${d.label} — Branch Power Division (dB)`,values:BANDS.map(()=>res.branchDB)}]:[]),
-            ];
-          })),
-          {label:"Flexible Duct Insertion Loss — Return (dB)",values:p2dr_flexIL},
-          {label:`End Reflection Factor (${form.p2dr_erlNC}) — R/A Grill`,values:p2dr_erl},
+          ...(p2dr_ductResults.filter((res,idx)=>idx>0&&res.d.branchIncluded).map(res=>({label:`${res.d.label} — Branch Power Division (dB)`,values:BANDS.map(()=>res.branchDB)}))),
+          ...(p2dr_ductResults.filter(res=>res.d.type==="unlined").flatMap(res=>[
+            {label:`${res.d.label} — Unlined Duct IL (dB)`,values:res.ductIL},
+            ...(Number(res.d.elbows)>0?[{label:`${res.d.label} — Elbow IL ×${res.d.elbows} (dB)`,values:res.elbowIL}]:[]),
+          ])),
+          ...(p2dr_ductResults.filter(res=>res.d.type==="lined").flatMap(res=>[
+            {label:`${res.d.label} — Lined Duct IL (dB)`,values:res.ductIL},
+            ...(Number(res.d.elbows)>0?[{label:`${res.d.label} — Elbow IL ×${res.d.elbows} (dB)`,values:res.elbowIL}]:[]),
+          ])),
+          ...(form.p2dr_flexOn?[{label:"Flexible Duct Insertion Loss — Return (dB)",values:p2dr_flexIL}]:[]),
+          ...(form.p2dr_grillDistOn?[{label:"Distance Effect — R/A Duct to Grill (dB)",values:p2dr_grillDistEff}]:[]),
           {label:form.p2dr_roomMode==="spaceRoom"?"Space/Room Effect @ Receiver (dB)":"Distance Effect (dB)",values:p2dr_roomEff},
-          {label:"Total Transmission Loss Lp @ Receiver (dB)",values:p2dr_totalLp,highlight:"total"},
-          {label:"Calculated Final Noise (dB)",values:p2dr_final,highlight:"final",color:"#1E40AF"},
+          ...(form.p2dr_erlOn?[{label:form.p2dr_erlCase==="case1"?`ERL Case 1 (DG) — Grill ${form.p2dr_erlW}×${form.p2dr_erlH}mm (dB)`:`End Reflection Factor (${form.p2dr_erlNC}) — R/A Grill`,values:p2dr_erl}]:[]),
+          {label:"Total Lp @ Receiver (dB)",values:p2dr_totalLp,highlight:"total",color:"#1E40AF"},
         ]}/>
       </Section>}
 
