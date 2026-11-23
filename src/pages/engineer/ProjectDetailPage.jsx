@@ -8,7 +8,6 @@ import {
   ChevronDown, Layers, Wind, Thermometer,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import FCUInputForm from "../../components/acoustic/FCUInputForm";
 
 import Sidebar              from "../../components/Sidebar";
 import ProjectInfoPanel     from "../../components/ProjectInfoPanel";
@@ -18,6 +17,8 @@ import ProjectModal         from "../../components/ProjectModal";
 import DeleteModal          from "../../components/DeleteModal";
 import AcousticInputForm    from "@/components/acoustic/AcousticInputForm";
 import AcousticResults      from "@/components/acoustic/AcousticResults";
+import FCUInputForm         from "@/components/acoustic/FCUInputForm";
+import FanInputForm         from "@/components/acoustic/FanInputForm";
 import { getProjectApi, updateProjectApi } from "@/api/projectApi";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { getCalculationsApi } from "@/api/calculationApi";
@@ -213,12 +214,49 @@ function Module1CalcTab({ id, existingCalc, setExistingCalc, isMobile }) {
 }
 
 /* ── Module 2 Calculation tab (FCU / Fan) ── */
-
-
 function Module2CalcTab({ project }) {
+  const subType = project?.module2SubType || "";
+
+  if (subType === "fcu") return <FCUInputForm project={project} />;
+  if (subType === "fan") return <FanInputForm project={project} />;
+
+  // fallback: neither subtype set yet
+  const label = "FCU / Fan";
+  const color = "#6366F1";
+
   return (
-    <div style={{ padding:"24px 0" }}>
-      <FCUInputForm project={project} />
+    <div style={{
+      display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center",
+      padding:"64px 32px", textAlign:"center",
+      background:"#fff", borderRadius:16,
+      border:"1.5px dashed #C7D2FE",
+      minHeight:320,
+    }}>
+      <div style={{ width:64, height:64, borderRadius:16,
+        background:"#EEF2FF",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        marginBottom:20 }}>
+        <Icon size={30} color={color} />
+      </div>
+      <h3 style={{ fontFamily:"Plus Jakarta Sans,sans-serif",
+        fontWeight:800, fontSize:18, color:"#0F172A",
+        margin:"0 0 10px" }}>
+        Module 2 — {label}
+      </h3>
+      <p style={{ color:"#64748B", fontSize:14, maxWidth:360,
+        fontFamily:"Inter,sans-serif", lineHeight:1.6, margin:"0 0 20px" }}>
+        The <strong style={{ color }}>{label}</strong> acoustic calculation form
+        is coming soon. This module will include dedicated octave-band input fields,
+        attenuation paths, and a matching report download.
+      </p>
+      <div style={{ display:"inline-flex", alignItems:"center", gap:8,
+        padding:"9px 18px", borderRadius:9999,
+        background:"#EEF2FF", border:"1.5px solid #C7D2FE",
+        fontSize:13, fontWeight:600, color }}>
+        <Layers size={14} />
+        Coming Soon
+      </div>
     </div>
   );
 }
